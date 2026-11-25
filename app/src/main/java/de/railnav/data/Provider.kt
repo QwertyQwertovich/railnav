@@ -40,6 +40,9 @@ interface Provider {
     suspend fun board(place: Place, time: Long, arrivals: Boolean, products: Set<Product>): List<de.railnav.model.BoardEntry> =
         throw ProviderException("Этот источник не поддерживает табло станции")
 
+    /** The whole run of a train (all stops) or null if unsupported. */
+    suspend fun trip(tripId: String): Leg? = null
+
     /** Returns an updated copy of the leg with live times/platforms or null if unsupported. */
     suspend fun refreshLeg(leg: Leg): Leg? = null
 

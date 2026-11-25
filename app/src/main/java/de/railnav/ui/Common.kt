@@ -162,12 +162,19 @@ fun JourneyBar(j: Journey, modifier: Modifier = Modifier) {
             val gap = (l.dep - cursor).coerceAtLeast(0)
             if (gap > 0) Spacer(Modifier.weight(gap / total))
             val w = ((l.arr - l.dep).coerceAtLeast(60_000) / total)
-            Box(
+            androidx.compose.foundation.layout.BoxWithConstraints(
                 Modifier.weight(w).height(22.dp).clip(RoundedCornerShape(4.dp))
                     .background(if (l.isWalk) Color(0xFFBDBDBD) else productColor(l.product)),
                 contentAlignment = Alignment.Center
             ) {
-                if (!l.isWalk) Text(l.line, color = Color.White, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Clip)
+                if (!l.isWalk) {
+                    // "RE30 · 1:13" when there is room, otherwise just the line
+                    val m = ((l.arr - l.dep) / 60000).toInt()
+                    val withTime = "${l.line} · ${m / 60}:${"%02d".format(m % 60)}"
+                    val fits = maxWidth.value / 6.6f >= withTime.length + 1
+                    Text(if (fits) withTime else l.line, color = Color.White, fontSize = 11.sp, maxLines = 1, softWrap = false,
+                        overflow = TextOverflow.Clip)
+                }
             }
             cursor = maxOf(cursor, l.arr)
         }

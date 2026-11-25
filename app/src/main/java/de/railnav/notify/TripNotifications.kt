@@ -49,6 +49,8 @@ object TripNotifications {
     }
 
     private fun plat(p: String?) = p?.let { ", пл. $it" } ?: ""
+    /** "21:32 (+5)": planned time with the delay right next to it. */
+    private fun tp(planned: Long, delayMin: Int) = t(planned) + if (delayMin > 0) " (+$delayMin)" else ""
     private fun legName(l: Leg) = l.line + (l.direction?.let { " → $it" } ?: "")
 
     /** All upcoming notification events of a plan. */
@@ -58,15 +60,13 @@ object TripNotifications {
         legs.forEachIndexed { i, l ->
             val next = legs.getOrNull(i + 1)
             val depText = buildString {
-                append("${t(l.dep)} ${l.from.name}${plat(l.from.platform)}")
-                if (l.from.depDelayMin > 0) append(" (+${l.from.depDelayMin})")
+                append("${tp(l.from.depPlanned ?: l.dep, l.from.depDelayMin)} ${l.from.name}${plat(l.from.platform)}")
                 if (l.from.platformChanged) append(" — смена платформы!")
-                append("\nПрибытие ${t(l.arr)} ${l.to.name}${plat(l.to.platform)}")
+                append("\nПрибытие ${tp(l.to.arrPlanned ?: l.arr, l.to.arrDelayMin)} ${l.to.name}${plat(l.to.platform)}")
             }
             out += TripEvent(l.dep - s.notifyBeforeDepMin * 60_000L, "dep$i", "Отправление: ${legName(l)}", depText)
             val arrText = buildString {
-                append("Прибытие ${t(l.arr)}${plat(l.to.platform)}")
-                if (l.to.arrDelayMin > 0) append(" (+${l.to.arrDelayMin})")
+                append("Прибытие ${tp(l.to.arrPlanned ?: l.arr, l.to.arrDelayMin)}${plat(l.to.platform)}")
                 if (next != null) {
                     val slack = (next.dep - l.arr) / 60000
                     if (next.from.name == l.to.name) {

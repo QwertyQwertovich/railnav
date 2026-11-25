@@ -43,6 +43,7 @@ sealed class Screen {
     data object Settings : Screen()
     data object Board : Screen()
     data object OfflineData : Screen()
+    data object Trip : Screen()
 }
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -76,8 +77,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var roundTrip by mutableStateOf(false)
     var returnTime by mutableStateOf<Long?>(null)
     var returnMode by mutableStateOf(ReturnMode.EARLIEST)
-    /** Travel mode: only a start and stops; you always come back to the start. */
-    var travelMode by mutableStateOf(false)
+    /** Travel mode = round trip without a destination: start → cities → back to start (order may be optimised). */
+    val travelMode get() = roundTrip && destination == null && vias.isNotEmpty()
+
+    // full train run (from board or a leg)
+    var tripLeg by mutableStateOf<de.railnav.model.Leg?>(null)
+    var tripHighlight by mutableStateOf<Pair<String, String>?>(null) // boarding/alighting station names
+    var tripLoading by mutableStateOf(false)
+    var tripError by mutableStateOf<String?>(null)
+
+    fun openTrip(providerId: String, tripId: String, from: String? = null, to: String? = null, fallback: de.railnav.model.Leg? = null) {
+        tripLeg = fallback; tripHighlight = if (from != null && to != null) from to to else null
+        tripError = null; tripLoading = true
+        go(Screen.Trip)
+        viewModelScope.launch {
+            try {
+                val prov = if (tripId.startsWith("off:")) Providers.offline(getApplication()) else Providers.get(getApplication(), providerId)
+                val full = prov.trip(tripId)
+                if (full != null) tripLeg = full else if (fallback == null) tripError = "Не удалось загрузить трассу поезда"
+                else tripError = "Полная трасса недоступна для этого источника — показан ваш участок"
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                tripError = e.message
+            } finally { tripLoading = false }
+        }
+    }
+
+    var boardProducts by mutableStateOf(settings.products)
+    fun boardShift(later: Boolean) {
+        val list = boardEntries
+        val base = boardTime ?: System.currentTimeMillis()
+        boardTime = if (later) (list.lastOrNull()?.time(boardArrivals)?.plus(60_000) ?: (base + 3600_000))
+        else base - 3600_000
+    }
 
     // station board
     var boardPlace by mutableStateOf<Place?>(null)
@@ -93,7 +125,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val prov = provider()
-                boardEntries = prov.board(p, boardTime ?: System.currentTimeMillis(), boardArrivals, products)
+                boardEntries = prov.board(p, boardTime ?: System.currentTimeMillis(), boardArrivals, boardProducts)
                 if (boardEntries.isEmpty()) boardError = "Нет поездов в ближайшие часы"
                 else if ((prov as? FallbackProvider)?.usedOffline == true) boardError = "Нет сети — показано офлайн-расписание"
             } catch (e: Exception) {
@@ -153,9 +185,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val radius = settings.cityRadiusKm.toDouble()
         // Offer "any station of the city" for the best station hit.
         val firstStop = res.firstOrNull { !it.isCity }
-        if (res.any { it.isCity }) return res.map { if (it.isCity) it.copy(radiusKm = radius) else it }
-        val synthetic = if (firstStop != null) listOf(firstStop.asCity(radius)) else emptyList()
-        return synthetic + res
+        val list = if (res.any { it.isCity }) res.map { if (it.isCity) it.copy(radiusKm = radius) else it }
+        else (if (firstStop != null) listOf(firstStop.asCity(radius)) else emptyList()) + res
+        // Main stations (Hbf) on top, keeping the provider's order otherwise.
+        fun isHbf(p: Place) = !p.isCity && Regex("Hbf|Hauptbahnhof", RegexOption.IGNORE_CASE).containsMatchIn(p.name) &&
+            p.region?.endsWith(")") != true
+        return list.withIndex().sortedWith(compareBy({ if (isHbf(it.value)) 0 else 1 }, { it.index })).map { it.value }
     }
 
     fun rememberPlace(p: Place) { recentStore.add(p); recents = recentStore.all() }

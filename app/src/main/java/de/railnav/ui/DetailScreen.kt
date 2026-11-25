@@ -21,6 +21,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -96,13 +100,27 @@ fun DetailScreen(vm: AppViewModel, requestNotifications: () -> Unit) {
             item {
                 vm.info?.let { Banner(it) }
                 vm.error?.let { Banner(it, error = true) }
-                Row(Modifier.padding(16.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Уведомления о поездке", fontWeight = FontWeight.Medium)
-                        Text("отправление, прибытие, пересадки, платформы, опоздания", fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.FilterChip(
+                        selected = p.notify,
+                        onClick = { val on = !p.notify; if (on) requestNotifications(); vm.saveCurrent(notify = on) },
+                        label = { Text(if (p.notify) "Уведомления вкл." else "Уведомления", fontSize = 13.sp) },
+                        leadingIcon = { Icon(if (p.notify) Icons.Filled.NotificationsActive else Icons.Filled.NotificationsNone, null,
+                            Modifier.size(18.dp)) })
+                    androidx.compose.foundation.layout.Box {
+                        var dbMenu by remember { mutableStateOf(false) }
+                        androidx.compose.material3.AssistChip(
+                            onClick = { if (p.segments.size > 1) dbMenu = true else de.railnav.store.DbExport.open(ctx, p) },
+                            label = { Text("Открыть в DB", fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp)) })
+                        androidx.compose.material3.DropdownMenu(dbMenu, { dbMenu = false }) {
+                            p.segments.forEachIndexed { i, sg ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text("${sg.from.name} → ${sg.to.name}, ${hhmm(sg.journey.dep)}") },
+                                    onClick = { dbMenu = false; de.railnav.store.DbExport.open(ctx, p, i) })
+                            }
+                        }
                     }
-                    Switch(p.notify, { on -> if (on) requestNotifications(); vm.saveCurrent(notify = on) })
                 }
                 if (p.segments.first().journey.provider == "offline") {
                     Banner("Маршрут из офлайн-расписания: без реального времени, платформы могут отсутствовать")
@@ -219,7 +237,8 @@ private fun SegmentBlock(vm: AppViewModel, si: Int, seg: Segment, onDelay: (Int)
         Spacer(Modifier.height(8.dp))
         val minTr = vm.settings.minTransferMin
         j.legs.forEachIndexed { li, leg ->
-            LegBlock(leg, onDelay = if (!leg.isWalk) ({ onDelay(li) }) else null)
+            LegBlock(leg, onDelay = if (!leg.isWalk) ({ onDelay(li) }) else null,
+                onTrip = leg.tripId?.takeIf { !leg.isWalk }?.let { tid -> { vm.openTrip(j.provider, tid, leg.from.name, leg.to.name, fallback = leg) } })
             val next = j.legs.getOrNull(li + 1)
             if (next != null && !leg.isWalk && !next.isWalk) {
                 val slack = ((next.dep - leg.arr) / 60000).toInt()
@@ -251,7 +270,7 @@ private fun TransferNote(slack: Int, risky: Boolean) {
 }
 
 @Composable
-fun LegBlock(leg: Leg, onDelay: (() -> Unit)?) {
+fun LegBlock(leg: Leg, onDelay: (() -> Unit)?, onTrip: (() -> Unit)? = null) {
     var expanded by remember { mutableStateOf(false) }
     val c = productColor(leg.product)
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
@@ -304,9 +323,18 @@ fun LegBlock(leg: Leg, onDelay: (() -> Unit)?) {
                         Text(if (leg.from.cancelled || leg.to.cancelled) "⚠ Отменён — найти альтернативы" else "⚠ Опаздывает на $late мин — альтернативы", fontSize = 13.sp)
                     }
                 } else {
-                    TextButton(onClick = onDelay, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
-                        modifier = Modifier.height(28.dp)) {
-                        Text("Опоздание?", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row {
+                        TextButton(onClick = onDelay, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                            modifier = Modifier.height(28.dp)) {
+                            Text("Опоздание?", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (onTrip != null) {
+                            Spacer(Modifier.width(16.dp))
+                            TextButton(onClick = onTrip, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                                modifier = Modifier.height(28.dp)) {
+                                Text("Вся трасса", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
                     }
                 }
             }

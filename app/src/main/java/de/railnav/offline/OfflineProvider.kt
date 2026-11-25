@@ -170,7 +170,7 @@ class OfflineProvider(private val ctx: Context) : Provider {
                             stop = StopTime(t.name(st), st.toString(), t.stationLat[st].toDouble(), t.stationLon[st].toDouble(),
                                 arrPlanned = if (arrivals) ms else null, depPlanned = if (arrivals) null else ms,
                                 platformPlanned = t.seqPlatform[k].takeIf { it >= 0 }?.let { t.strings[it] }),
-                            tripId = "off:$trip",
+                            tripId = "off:$trip:${midnight + off * 1000L}",
                         )
                     }
                     c++
@@ -178,6 +178,14 @@ class OfflineProvider(private val ctx: Context) : Provider {
             }
             out.sortedBy { it.time(arrivals) }.take(60)
         }
+
+    override suspend fun trip(tripId: String): Leg? = withContext(Dispatchers.Default) {
+        val p = tripId.split(':')
+        if (p.size < 3 || p[0] != "off") return@withContext null
+        val t = timetable()
+        val trip = p[1].toIntOrNull()?.takeIf { it in 0 until t.nTrips } ?: return@withContext null
+        CsaRouter(t, 0, 0, id).fullTrip(trip, p[2].toLong())
+    }
 
     private fun productAllowed(t: Timetable, trip: Int, mask: Int) = mask and (1 shl t.tripProduct[trip].toInt()) != 0
 

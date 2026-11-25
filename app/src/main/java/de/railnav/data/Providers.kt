@@ -49,6 +49,8 @@ class FallbackProvider(private val primary: Provider, private val offline: Offli
     }
 
     override suspend fun refreshLeg(leg: de.railnav.model.Leg) = primary.refreshLeg(leg)
+    override suspend fun trip(tripId: String) =
+        if (tripId.startsWith("off:")) offline.trip(tripId) else primary.trip(tripId)
 
     override suspend fun board(place: Place, time: Long, arrivals: Boolean, products: Set<de.railnav.model.Product>) = try {
         primary.board(place, time, arrivals, products).also { usedOffline = false }

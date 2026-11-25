@@ -147,6 +147,11 @@ class TransitousProvider(private val base: String = "https://api.transitous.org"
             .sortedBy { it.time(arrivals) ?: 0L }
     }
 
+    override suspend fun trip(tripId: String): Leg? {
+        val it = get("/api/v6/trip", listOf("tripId" to tripId)).jsonObject
+        return parseItinerary(it)?.legs?.firstOrNull { !it.isWalk }
+    }
+
     override suspend fun refreshLeg(leg: Leg): Leg? {
         val tripId = leg.tripId ?: return null
         val it = get("/api/v6/trip", listOf("tripId" to tripId)).jsonObject

@@ -128,13 +128,6 @@ fun SearchScreen(vm: AppViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("Поиск маршрута", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                SegmentedButton(!vm.travelMode, { vm.travelMode = false }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Маршрут", maxLines = 1) }
-                SegmentedButton(vm.travelMode, { vm.travelMode = true; vm.arriveBy = false }, SegmentedButtonDefaults.itemShape(1, 2)) {
-                    Text("Путешествие", maxLines = 1)
-                }
-            }
-            if (vm.travelMode) Hint("Выберите старт и города для посещения — маршрут вернётся обратно в старт.")
 
             Card {
                 Column(Modifier.padding(12.dp)) {
@@ -148,9 +141,9 @@ fun SearchScreen(vm: AppViewModel) {
                                     onMaxStay = { m -> vm.vias[i] = w.copy(maxStayMin = m) },
                                     onRemove = { vm.vias.removeAt(i) })
                             }
-                            if (!vm.travelMode) PlaceField(
-                                if (vm.roundTrip) "Куда (самая дальняя точка)" else "Куда", vm.destination,
-                                placeholder = if (vm.roundTrip && vm.vias.isNotEmpty()) "можно не указывать: развернётесь в последнем городе" else null,
+                            PlaceField(
+                                if (vm.roundTrip) "Куда (необязательно)" else "Куда", vm.destination,
+                                placeholder = if (vm.roundTrip) "не указано — путешествие по городам с возвратом в старт" else null,
                                 onClear = if (vm.destination != null) ({ vm.destination = null }) else null,
                             ) { picker = "dest" }
                         }
@@ -188,10 +181,14 @@ fun SearchScreen(vm: AppViewModel) {
 
             Card {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (!vm.travelMode) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("Туда и обратно")
-                            Text("покажет, сколько времени будет в каждом городе", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Туда и обратно / путешествие")
+                            Text(
+                                if (vm.roundTrip) "без «Куда» — объезд городов из списка и возврат в старт"
+                                else "покажет, сколько времени будет в каждом городе",
+                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                         Switch(vm.roundTrip, { vm.roundTrip = it; if (it) vm.arriveBy = false })
                     }
@@ -263,7 +260,7 @@ fun SearchScreen(vm: AppViewModel) {
 
     if (showTransport) {
         ModalBottomSheet(onDismissRequest = { showTransport = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            TransportSheet(vm) { showTransport = false }
+            TransportSheet(vm.products, { vm.products = it }) { showTransport = false }
         }
     }
 
@@ -289,29 +286,29 @@ private fun Hint(text: String) = Text(text, fontSize = 12.sp, color = MaterialTh
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TransportSheet(vm: AppViewModel, onDone: () -> Unit) {
+fun TransportSheet(selected: Set<Product>, onChange: (Set<Product>) -> Unit, onDone: () -> Unit) {
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Транспорт", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            OutlinedButton(onClick = { vm.products = Product.railOnly }) { Text("Все поезда") }
-            OutlinedButton(onClick = { vm.products = Product.regionalOnly }) { Text("RE + RB + S") }
-            OutlinedButton(onClick = { vm.products = Product.selectable.toSet() }) { Text("Всё") }
+            OutlinedButton(onClick = { onChange(Product.railOnly) }) { Text("Все поезда") }
+            OutlinedButton(onClick = { onChange(Product.regionalOnly) }) { Text("RE + RB + S") }
+            OutlinedButton(onClick = { onChange(Product.selectable.toSet()) }) { Text("Всё") }
         }
         Text("Поезда", fontWeight = FontWeight.Medium)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (p in Product.selectable.filter { it.isRail }) ProductChip(vm, p)
+            for (p in Product.selectable.filter { it.isRail }) ProductChip(p, p in selected) { onChange(if (p in selected) selected - p else selected + p) }
         }
         Text("Городской и другой транспорт", fontWeight = FontWeight.Medium)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (p in Product.selectable.filter { !it.isRail }) ProductChip(vm, p)
+            for (p in Product.selectable.filter { !it.isRail }) ProductChip(p, p in selected) { onChange(if (p in selected) selected - p else selected + p) }
         }
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Готово") }
     }
 }
 
 @Composable
-private fun ProductChip(vm: AppViewModel, p: Product) {
-    FilterChip(selected = p in vm.products, onClick = { vm.toggleProduct(p) }, label = { Text(p.label, maxLines = 1) },
+private fun ProductChip(p: Product, on: Boolean, onClick: () -> Unit) {
+    FilterChip(selected = on, onClick = onClick, label = { Text(p.label, maxLines = 1) },
         leadingIcon = { Icon(productIcon(p), null, Modifier.size(18.dp)) })
 }
 

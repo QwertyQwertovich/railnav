@@ -299,18 +299,43 @@ object Share {
         TripPlan(UUID.randomUUID().toString(), o["t"]!!.jsonPrimitive.content, segs)
     }.getOrNull()
 
-    fun webLink(p: TripPlan) = SHARE_BASE + "#r=" + encode(p)
+    /** Shortest link: binary v2, deflated ("q") or raw ("b") — whichever is shorter. */
+    fun webLink(p: TripPlan): String {
+        val raw = ShareBinary.encode(p)
+        val def = Deflater(9, true); def.setInput(raw); def.finish()
+        val buf = ByteArray(raw.size + 64); val n = def.deflate(buf); def.end()
+        return if (n < raw.size) SHARE_BASE + "#q=" + Base64.encodeToString(buf.copyOf(n), B64)
+        else SHARE_BASE + "#b=" + Base64.encodeToString(raw, B64)
+    }
+
+    private fun inflate(bytes: ByteArray): ByteArray {
+        val inf = Inflater(true); inf.setInput(bytes)
+        val out = ByteArrayOutputStream(); val buf = ByteArray(4096)
+        while (!inf.finished()) { val k = inf.inflate(buf); if (k == 0 && (inf.needsInput() || inf.needsDictionary())) break; out.write(buf, 0, k) }
+        inf.end(); return out.toByteArray()
+    }
+
+    private fun decodeV2(key: String, data: String): TripPlan? = runCatching {
+        val bytes = Base64.decode(data, B64)
+        ShareBinary.decode(if (key == "q") inflate(bytes) else bytes, data.hashCode())
+    }.getOrNull()
+
+    private val v2Re = Regex("(?:^|[#?&])([qb])=([A-Za-z0-9_-]+)")
 
     fun isShareUri(u: Uri) =
         (u.scheme == "railnav" && u.host == "plan") || (u.host == "qwertyqwertovich.github.io" && (u.path ?: "").startsWith("/railnav"))
 
     fun decodeAny(u: Uri): TripPlan? {
+        u.getQueryParameter("q")?.let { return decodeV2("q", it) }
+        u.getQueryParameter("b")?.let { return decodeV2("b", it) }
+        u.fragment?.let { f -> v2Re.find(f)?.let { return decodeV2(it.groupValues[1], it.groupValues[2]) } }
         u.getQueryParameter("r")?.let { return decode(it) }
         u.fragment?.let { f -> Regex("r=([A-Za-z0-9_-]+)").find(f)?.groupValues?.get(1)?.let { return decode(it) } }
         return u.getQueryParameter("d")?.let { decodeLegacy(it) }
     }
 
     fun decodeText(text: String): TripPlan? {
+        v2Re.find(text)?.let { return decodeV2(it.groupValues[1], it.groupValues[2]) }
         Regex("[#?&]r=([A-Za-z0-9_-]+)").find(text)?.groupValues?.get(1)?.let { return decode(it) }
         return Regex("[?&]d=([A-Za-z0-9_-]+)").find(text)?.groupValues?.get(1)?.let { decodeLegacy(it) }
     }

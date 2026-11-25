@@ -93,6 +93,7 @@ fun App(vm: AppViewModel, requestNotifications: () -> Unit) {
                 Screen.Settings -> SettingsScreen(vm)
                 Screen.Board -> BoardScreen(vm)
                 Screen.OfflineData -> OfflineDataScreen(vm)
+                Screen.Trip -> TripScreen(vm)
             }
         }
     }

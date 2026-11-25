@@ -1,6 +1,8 @@
 package de.railnav.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -49,12 +51,14 @@ import de.railnav.model.BoardEntry
 import de.railnav.model.Product
 import kotlinx.coroutines.delay
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun BoardScreen(vm: AppViewModel) {
     var picker by remember { mutableStateOf(false) }
+    var transport by remember { mutableStateOf(false) }
 
     // reload on parameter change; refresh every minute while showing "now"
-    LaunchedEffect(vm.boardPlace, vm.boardArrivals, vm.boardTime, vm.products) {
+    LaunchedEffect(vm.boardPlace, vm.boardArrivals, vm.boardTime, vm.boardProducts) {
         if (vm.boardPlace == null) return@LaunchedEffect
         while (true) {
             vm.loadBoard()
@@ -87,11 +91,13 @@ fun BoardScreen(vm: AppViewModel) {
                     TextButton(onClick = { vm.boardTime = null }) { Text("Сейчас") }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.DirectionsRailway, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { transport = true }.padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.DirectionsRailway, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(6.dp))
-                Text(productsSummary(vm.products) + " (меняется в поиске)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(productsSummary(vm.boardProducts), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text("изменить", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         if (vm.boardLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -101,9 +107,20 @@ fun BoardScreen(vm: AppViewModel) {
                 Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+            if (vm.boardPlace != null) item {
+                TextButton(onClick = { vm.boardShift(false) }, modifier = Modifier.fillMaxWidth()) { Text("▲ Раньше") }
+            }
             items(vm.boardEntries, key = { (it.tripId ?: it.line) + it.time(vm.boardArrivals) }) { e ->
-                BoardRow(e, vm.boardArrivals)
+                Box(Modifier.clickable(enabled = e.tripId != null) {
+                    val st = vm.boardPlace?.name ?: e.stop.name
+                    vm.openTrip(vm.settings.provider, e.tripId!!,
+                        from = if (vm.boardArrivals) "*start*" else e.stop.name,
+                        to = if (vm.boardArrivals) e.stop.name else "*end*")
+                }) { BoardRow(e, vm.boardArrivals) }
                 HorizontalDivider()
+            }
+            if (vm.boardEntries.isNotEmpty()) item {
+                TextButton(onClick = { vm.boardShift(true) }, modifier = Modifier.fillMaxWidth()) { Text("▼ Позже") }
             }
             if (vm.boardEntries.isNotEmpty()) item {
                 TextButton(onClick = { vm.boardUseInSearch() }, modifier = Modifier.fillMaxWidth().padding(8.dp)) {
@@ -111,6 +128,11 @@ fun BoardScreen(vm: AppViewModel) {
                 }
             }
         }
+    }
+
+    if (transport) androidx.compose.material3.ModalBottomSheet(onDismissRequest = { transport = false },
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        TransportSheet(vm.boardProducts, { vm.boardProducts = it }) { transport = false }
     }
 
     if (picker) PlacePicker(vm, onDismiss = { picker = false }) { p ->

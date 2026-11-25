@@ -79,11 +79,45 @@ const fmtD = new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "2-digit"
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const dur = m => m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`;
 
-async function decode(data) {
+function b64bytes(data) {
   const b64 = data.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((data.length + 3) % 4);
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+async function inflate(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  return JSON.parse(await new Response(stream).text());
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+// v1: deflated JSON (#r=)
+async function decode(data) {
+  return JSON.parse(new TextDecoder().decode(await inflate(b64bytes(data))));
+}
+// v2: compact binary (#q= deflated, #b= raw) — converted to the v1 structure for rendering
+function readV2(a) {
+  let i = 0;
+  const u = () => { let r = 0, s = 0, x; do { x = a[i++]; r += (x & 0x7f) * 2 ** s; s += 7; } while (x >= 0x80); return r; };
+  const z = () => { const v = u(); return v % 2 ? -(v + 1) / 2 : v / 2; };
+  if (a[i++] !== 2) throw new Error("format");
+  const base = u();
+  const strings = [];
+  for (let n = u(); n > 0; n--) { const len = u(); strings.push(new TextDecoder().decode(a.subarray(i, i + len))); i += len; }
+  const names = [], coords = [];
+  let la = 0, lo = 0;
+  for (let n = u(); n > 0; n--) { names.push(strings[u()]); la += z(); lo += z(); coords.push(la * 10, lo * 10); }
+  const segs = [];
+  let prev = 0;
+  for (let n = u(); n > 0; n--) {
+    const seg = [strings[u()], strings[u()]];
+    for (let k = u(); k > 0; k--) {
+      const prod = a[i++], line = u() - 1, dir = u() - 1, sa = u(), sb = u();
+      const dep = prev + z(), arr = dep + u(); prev = arr;
+      const pa = u() - 1, pb = u() - 1;
+      seg.push([prod, line >= 0 ? strings[line] : "", dir >= 0 ? strings[dir] : "", sa, sb, dep, arr,
+                pa >= 0 ? strings[pa] : "", pb >= 0 ? strings[pb] : ""]);
+    }
+    segs.push(seg);
+  }
+  const title = [segs[0][0], ...segs.map(x => x[1])].join(" → ");
+  return { v: 2, t: title, b: base, s: segs, n: names, c: coords };
 }
 
 function render(p) {
@@ -124,7 +158,7 @@ function render(p) {
 
 async function show() {
   const content = document.getElementById("content");
-  const m = location.hash.match(/r=([A-Za-z0-9_-]+)/);
+  const m = location.hash.match(/[#&]([rqb])=([A-Za-z0-9_-]+)/);
   document.getElementById("open").hidden = true;
   if (!m) {
     content.innerHTML = `<h1>RailNav</h1><div class="sub">Маршруты по железной дороге — приложение для Android</div>
@@ -138,14 +172,15 @@ async function show() {
     return;
   }
   try {
-    const plan = await decode(m[1]);
+    const [, key, data] = m;
+    const plan = key === "r" ? await decode(data) : readV2(key === "q" ? await inflate(b64bytes(data)) : b64bytes(data));
     content.innerHTML = render(plan);
     const open = document.getElementById("open");
     const fallback = encodeURIComponent(document.getElementById("apk").href);
     const ua = navigator.userAgent;
     open.href = /Android/i.test(ua)
-      ? `intent://plan?r=${m[1]}#Intent;scheme=railnav;package=de.railnav;S.browser_fallback_url=${fallback};end`
-      : `railnav://plan?r=${m[1]}`;
+      ? `intent://plan?${key}=${data}#Intent;scheme=railnav;package=de.railnav;S.browser_fallback_url=${fallback};end`
+      : `railnav://plan?${key}=${data}`;
     open.hidden = false;
   } catch (e) {
     content.innerHTML = `<h1>Не удалось открыть маршрут</h1><p class="err">Ссылка повреждена или браузер слишком старый.</p>`;

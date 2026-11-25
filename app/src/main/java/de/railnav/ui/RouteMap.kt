@@ -65,6 +65,8 @@ private const val STYLE_LIGHT = "https://tiles.openfreemap.org/styles/positron"
 private const val STYLE_DARK = "https://tiles.openfreemap.org/styles/dark"
 private const val SRC_ROUTES = "routes"
 private const val SRC_STOPS = "stops"
+private const val SRC_INTER = "inter"
+private const val SRC_TRAINS = "trains"
 
 private var cacheConfigured = false
 
@@ -139,6 +141,7 @@ fun RouteMap(plans: List<TripPlan>, selected: Int, onSelect: (Int) -> Unit, modi
         val (map, style) = ready ?: return@LaunchedEffect
         (style.getSource(SRC_ROUTES) as? GeoJsonSource)?.setGeoJson(routeFeatures(plans, selected))
         (style.getSource(SRC_STOPS) as? GeoJsonSource)?.setGeoJson(stopFeatures(plans.getOrNull(selected)))
+        (style.getSource(SRC_INTER) as? GeoJsonSource)?.setGeoJson(interFeatures(plans.getOrNull(selected)))
         if (fittedFor[0] !== plans) {
             fittedFor[0] = plans
             val pts = plans.flatMap { p -> p.allJourneys.flatMap { j -> j.legs.flatMap { listOf(it.from.pos, it.to.pos) } } }
@@ -150,12 +153,23 @@ fun RouteMap(plans: List<TripPlan>, selected: Int, onSelect: (Int) -> Unit, modi
         }
     }
 
+    // Train positions by (live) schedule, refreshed every 20 s.
+    LaunchedEffect(ready, plans, selected) {
+        val (_, style) = ready ?: return@LaunchedEffect
+        while (true) {
+            (style.getSource(SRC_TRAINS) as? GeoJsonSource)?.setGeoJson(trainFeatures(plans, selected, System.currentTimeMillis()))
+            kotlinx.coroutines.delay(20_000)
+        }
+    }
+
     AndroidView(factory = { mapView }, modifier = modifier)
 }
 
 private fun addLayers(style: Style, dark: Boolean) {
     style.addSource(GeoJsonSource(SRC_ROUTES, FeatureCollection.fromFeatures(emptyList())))
     style.addSource(GeoJsonSource(SRC_STOPS, FeatureCollection.fromFeatures(emptyList())))
+    style.addSource(GeoJsonSource(SRC_INTER, FeatureCollection.fromFeatures(emptyList())))
+    style.addSource(GeoJsonSource(SRC_TRAINS, FeatureCollection.fromFeatures(emptyList())))
     val casing = if (dark) "#101418" else "#FFFFFF"
     style.addLayer(LineLayer("route-other", SRC_ROUTES).withFilter(eq(get("kind"), literal("other"))).withProperties(
         lineColor(get("color")), lineWidth(4f), lineOpacity(0.55f), lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
@@ -165,12 +179,76 @@ private fun addLayers(style: Style, dark: Boolean) {
         lineColor(get("color")), lineWidth(6f), lineCap(Property.LINE_CAP_ROUND), lineJoin(Property.LINE_JOIN_ROUND)))
     style.addLayer(LineLayer("route-walk", SRC_ROUTES).withFilter(eq(get("kind"), literal("walk"))).withProperties(
         lineColor("#808080"), lineWidth(3f), lineDasharray(arrayOf(1.5f, 1.5f))))
+    // Intermediate stops: only when zoomed in enough to not clutter the map
+    style.addLayer(CircleLayer("inter", SRC_INTER).withProperties(
+        circleRadius(3.5f), circleColor(casing), circleStrokeColor(get("color")), circleStrokeWidth(2f)).apply { minZoom = 9.5f })
+    style.addLayer(SymbolLayer("inter-labels", SRC_INTER).withProperties(
+        textField(get("label")), textFont(arrayOf("Noto Sans Regular")), textSize(11f),
+        textColor(if (dark) "#BBBBBB" else "#505050"), textHaloColor(casing), textHaloWidth(1.4f),
+        textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(0.8f, 0f)), textOptional(true)).apply { minZoom = 11.5f })
     style.addLayer(CircleLayer("stops", SRC_STOPS).withProperties(
         circleRadius(get("r")), circleColor(casing), circleStrokeColor(get("color")), circleStrokeWidth(3f)))
     style.addLayer(SymbolLayer("stop-labels", SRC_STOPS).withProperties(
         textField(get("label")), textFont(arrayOf("Noto Sans Regular")), textSize(12f),
         textColor(if (dark) "#EEEEEE" else "#202020"), textHaloColor(casing), textHaloWidth(1.6f),
         textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(0.9f, 0f)), textOptional(true), textAllowOverlap(false)))
+    // Trains: coloured dot with white ring and the line name above
+    style.addLayer(CircleLayer("trains", SRC_TRAINS).withProperties(
+        circleRadius(9f), circleColor(get("color")), circleStrokeColor("#FFFFFF"), circleStrokeWidth(3f)))
+    style.addLayer(SymbolLayer("train-labels", SRC_TRAINS).withProperties(
+        textField(get("label")), textFont(arrayOf("Noto Sans Bold")), textSize(12f),
+        textColor(if (dark) "#FFFFFF" else "#101010"), textHaloColor(casing), textHaloWidth(2f),
+        textAnchor(Property.TEXT_ANCHOR_BOTTOM), textOffset(arrayOf(0f, -1.1f)), textAllowOverlap(true)))
+}
+
+private fun interFeatures(p: TripPlan?): FeatureCollection {
+    p ?: return FeatureCollection.fromFeatures(emptyList())
+    val color = hex(0)
+    val out = ArrayList<Feature>()
+    for (l in p.allJourneys.flatMap { it.transitLegs }) for (s in l.stops) {
+        if (s.lat == 0.0) continue
+        val f = Feature.fromGeometry(Point.fromLngLat(s.lon, s.lat))
+        f.addStringProperty("label", "${s.name}  ${hhmm(s.dep ?: s.arr)}")
+        f.addStringProperty("color", color)
+        out += f
+    }
+    return FeatureCollection.fromFeatures(out)
+}
+
+/** Where each running train of the plans should be now, interpolated between stops (live times preferred). */
+private fun trainFeatures(plans: List<TripPlan>, selected: Int, now: Long): FeatureCollection {
+    val out = ArrayList<Feature>()
+    plans.forEachIndexed { i, p ->
+        for (l in p.allJourneys.flatMap { it.transitLegs }) {
+            val raw = trainPosition(l, now) ?: continue
+            // snap onto the track shape so the dot sits on the line, not on a straight chord
+            val pos = l.shape.minByOrNull { (it.lat - raw.lat) * (it.lat - raw.lat) + (it.lon - raw.lon) * (it.lon - raw.lon) } ?: raw
+            val f = Feature.fromGeometry(Point.fromLngLat(pos.lon, pos.lat))
+            f.addStringProperty("color", String.format("#%06X", productColor(l.product).toArgb() and 0xFFFFFF))
+            f.addStringProperty("label", if (i == selected || plans.size == 1) l.line else "")
+            out += f
+        }
+    }
+    return FeatureCollection.fromFeatures(out)
+}
+
+fun trainPosition(l: de.railnav.model.Leg, now: Long): LatLon? {
+    val pts = listOf(l.from) + l.stops + listOf(l.to)
+    if (pts.any { it.lat == 0.0 }) return null
+    val first = l.from.dep ?: return null; val last = l.to.arr ?: return null
+    if (now < first || now > last) return null
+    for (k in 0 until pts.size - 1) {
+        val a = pts[k]; val b = pts[k + 1]
+        val dep = a.dep ?: a.arr ?: continue
+        val arrA = a.arr ?: dep
+        if (now in arrA..dep) return a.pos // standing at the station
+        val arr = b.arr ?: b.dep ?: continue
+        if (now in dep..arr) {
+            val f = if (arr > dep) (now - dep).toDouble() / (arr - dep) else 0.0
+            return LatLon(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f)
+        }
+    }
+    return null
 }
 
 private fun hex(i: Int) = String.format("#%06X", RouteColors[i % RouteColors.size].toArgb() and 0xFFFFFF)

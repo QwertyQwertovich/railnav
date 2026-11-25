@@ -106,7 +106,10 @@ class CsaRouter(val t: Timetable, val productMask: Int, val minTransferSec: Int,
         platformPlanned = if (plat >= 0) t.strings[plat] else null,
     )
 
-    private fun tripLeg(trip: Int, p0: Int, p1: Int, off: Int, midnight: Long): Leg {
+    /** Whole trip; [base] = epoch millis of the trip's service-day midnight. */
+        fun fullTrip(trip: Int, base: Long): Leg = tripLeg(trip, 0, t.tripStart[trip + 1] - t.tripStart[trip] - 1, 0, base)
+
+        private fun tripLeg(trip: Int, p0: Int, p1: Int, off: Int, midnight: Long): Leg {
         val b = t.tripStart[trip]
         fun ms(sec: Int) = midnight + (sec + off) * 1000L
         val all = (p0..p1).map { p ->
@@ -116,7 +119,7 @@ class CsaRouter(val t: Timetable, val productMask: Int, val minTransferSec: Int,
             product = Product.refine(Product.entries[t.tripProduct[trip].toInt()], t.strings[t.tripLine[trip]]),
             line = t.strings[t.tripLine[trip]],
             direction = t.strings[t.tripHeadsign[trip]].ifBlank { t.name(t.seqStation[t.tripStart[trip + 1] - 1]) },
-            tripId = "off:$trip",
+            tripId = "off:$trip:${midnight + off * 1000L}",
             from = all.first().copy(arrPlanned = null),
             to = all.last().copy(depPlanned = null),
             stops = all.subList(1, all.size - 1),
