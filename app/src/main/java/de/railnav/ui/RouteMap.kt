@@ -302,12 +302,14 @@ private fun hex(i: Int) = String.format("#%06X", RouteColors[i % RouteColors.siz
 private fun routeFeatures(plans: List<TripPlan>, selected: Int): FeatureCollection {
     val out = ArrayList<Feature>()
     val order = plans.indices.sortedBy { if (it == selected) 1 else 0 }
-    for (i in order) for (j in plans[i].allJourneys) for (l in j.legs) {
+    // A single multi-segment plan (detail screen): each segment in its own colour.
+    val bySegment = plans.size == 1 && plans[0].segments.size > 1
+    for (i in order) for ((si, sg) in plans[i].segments.withIndex()) for (l in sg.journey.legs) {
         val pts = simplify(l.geometry().filter { it.lat != 0.0 })
         if (pts.size < 2) continue
         val f = Feature.fromGeometry(LineString.fromLngLats(pts.map { Point.fromLngLat(it.lon, it.lat) }))
         f.addNumberProperty("i", i)
-        f.addStringProperty("color", if (l.isWalk) "#808080" else hex(i))
+        f.addStringProperty("color", if (l.isWalk) "#808080" else hex(if (bySegment) si else i))
         f.addStringProperty("kind", when { l.isWalk -> "walk"; i == selected -> "sel"; else -> "other" })
         out += f
     }
@@ -316,11 +318,13 @@ private fun routeFeatures(plans: List<TripPlan>, selected: Int): FeatureCollecti
 
 private fun stopFeatures(p: TripPlan?): FeatureCollection {
     p ?: return FeatureCollection.fromFeatures(emptyList())
-    val color = hex(0)
     val out = ArrayList<Feature>()
-    val legs = p.allJourneys.flatMap { it.transitLegs }
+    val multi = p.segments.size > 1
+    val legSeg = p.segments.withIndex().flatMap { (si, sg) -> sg.journey.transitLegs.map { it to si } }
+    val legs = legSeg.map { it.first }
     val seen = HashSet<String>()
     legs.forEachIndexed { k, l ->
+        val color = hex(if (multi) legSeg[k].second else 0)
         for ((s, dep) in listOf(l.from to true, l.to to false)) {
             if (s.lat == 0.0 || !seen.add(s.name)) continue
             val f = Feature.fromGeometry(Point.fromLngLat(s.lon, s.lat))

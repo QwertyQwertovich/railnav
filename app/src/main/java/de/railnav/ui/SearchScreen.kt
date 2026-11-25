@@ -288,8 +288,9 @@ private fun ReturnByRow(vm: AppViewModel) {
     var custom by remember { mutableStateOf(vm.returnTime != null && presets.none { at(it) == vm.returnTime }) }
     Text("Быть дома до:")
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        FilterChip(vm.returnTime == null && !custom, { vm.returnTime = null; custom = false }, label = { Text("конец дня") })
-        for (h in presets) FilterChip(!custom && vm.returnTime == at(h), { vm.returnTime = at(h); custom = false },
+        // no time chosen = midnight (same as the 0:00 button)
+        for (h in presets) FilterChip(!custom && (vm.returnTime == at(h) || (h == 0 && vm.returnTime == null)),
+            { vm.returnTime = at(h); custom = false },
             label = { Text("%d:00".format(h)) })
         FilterChip(custom, { custom = true; if (vm.returnTime == null) vm.returnTime = at(21) }, label = { Text("своё время") })
     }
@@ -407,8 +408,29 @@ private fun PlaceField(label: String, place: Place?, placeholder: String? = null
 private fun ViaRow(i: Int, w: Waypoint, label: String, onPick: () -> Unit, onStay: (Int) -> Unit, onMaxStay: (Int?) -> Unit, onRemove: () -> Unit) {
     Column(Modifier.padding(start = 12.dp)) {
         PlaceField(label, w.place, onClear = onRemove, onClick = onPick)
-        StayPicker("Остановка минимум", w.minStayMin, onChange = onStay)
-        StayPicker("максимум", w.maxStayMin ?: -1, allowNone = true) { onMaxStay(if (it < 0) null else it) }
+        // min and max stay on one line
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Стоянка:", fontSize = 14.sp)
+            Spacer(Modifier.width(4.dp))
+            StayChoice("мин", w.minStayMin, onChange = onStay)
+            Spacer(Modifier.weight(1f))
+            StayChoice("макс", w.maxStayMin ?: -1, allowNone = true) { onMaxStay(if (it < 0) null else it) }
+        }
+    }
+}
+
+@Composable
+private fun StayChoice(label: String, value: Int, allowNone: Boolean = false, onChange: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) {
+            Text("$label ", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(if (value < 0) "любая" else stayLabel(value), fontSize = 14.sp, maxLines = 1)
+        }
+        DropdownMenu(open, { open = false }) {
+            if (allowNone) DropdownMenuItem(text = { Text("любая") }, onClick = { onChange(-1); open = false })
+            for (m in STAY_OPTIONS) DropdownMenuItem(text = { Text(stayLabel(m)) }, onClick = { onChange(m); open = false })
+        }
     }
 }
 
