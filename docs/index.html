@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RailNav — маршрут</title>
+<meta name="description" content="Маршрут из приложения RailNav: открыть в приложении или скачать APK.">
+<style>
+  :root {
+    --bg: #f6f4f4; --card: #ffffff; --text: #1d1b1c; --muted: #6b6466; --line: #e3dddf;
+    --accent: #c0102a; --accent-text: #ffffff; --ok: #2e7d32; --late: #d32f2f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141214; --card: #221f21; --text: #eeeaeb; --muted: #a59da0; --line: #3a3537;
+      --accent: #ff8a95; --accent-text: #2b0006; --ok: #81c784; --late: #ef5350;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141214; --card: #221f21; --text: #eeeaeb; --muted: #a59da0; --line: #3a3537;
+    --accent: #ff8a95; --accent-text: #2b0006; --ok: #81c784; --late: #ef5350;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 24px; margin: 4px 0 2px; }
+  .sub { color: var(--muted); margin-bottom: 16px; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin: 12px 0; }
+  .seg-title { font-weight: 700; margin-bottom: 4px; }
+  .seg-meta { color: var(--muted); font-size: 14px; margin-bottom: 10px; }
+  .leg { display: grid; grid-template-columns: 52px 6px 1fr; gap: 0 10px; margin: 6px 0; }
+  .t { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bar { border-radius: 3px; grid-row: 1 / span 3; }
+  .st { font-weight: 600; }
+  .pl { color: var(--muted); font-weight: 400; font-size: 14px; }
+  .mid { padding: 6px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+  .badge { color: #fff; font-weight: 700; font-size: 13px; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+  .stay { color: var(--ok); font-weight: 600; margin: 10px 0 0; }
+  .buttons { display: flex; flex-direction: column; gap: 10px; margin: 18px 0; }
+  a.btn { display: block; text-align: center; padding: 14px; border-radius: 28px; text-decoration: none; font-weight: 600; }
+  a.primary { background: var(--accent); color: var(--accent-text); }
+  a.secondary { border: 1.5px solid var(--line); color: var(--text); }
+  .note { color: var(--muted); font-size: 13px; }
+  .err { color: var(--late); }
+  ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">🚆 RailNav</div>
+  <div id="content"><p class="note">Загрузка…</p></div>
+  <div class="buttons">
+    <a id="open" class="btn primary" href="#" hidden>Открыть в приложении RailNav</a>
+    <a id="apk" class="btn secondary" href="https://github.com/QwertyQwertovich/railnav/releases/latest/download/RailNav.apk">Скачать приложение (APK для Android)</a>
+  </div>
+  <p class="note">RailNav — поиск маршрутов по железной дороге в Германии и Европе: карта всех вариантов, поездки через несколько городов,
+    туда-обратно, офлайн-расписание, уведомления о пересадках. Исходный код:
+    <a href="https://github.com/QwertyQwertovich/railnav" style="color:inherit">github.com/QwertyQwertovich/railnav</a>.</p>
+  <p class="note">Данные маршрута хранятся только в самой ссылке (после «#») и никуда не отправляются.</p>
+</main>
+<script>
+// Product ordinals must match de.railnav.model.Product
+const PRODUCTS = [
+  ["ICE", "#b71c1c"], ["IC/EC", "#e53935"], ["Ночной", "#283593"], ["RB", "#6d5d4b"], ["S-Bahn", "#2e7d32"],
+  ["U-Bahn", "#1565c0"], ["Трамвай", "#c2185b"], ["Автобус", "#6a1b9a"], ["Автобус", "#6a1b9a"], ["Паром", "#00838f"],
+  ["Пешком", "#9e9e9e"], ["", "#757575"], ["RE", "#8d3b2e"]
+];
+const WALK = 10;
+const tz = "Europe/Berlin";
+const fmtT = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: tz });
+const fmtD = new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: tz });
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const dur = m => m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`;
+
+async function decode(data) {
+  const b64 = data.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((data.length + 3) % 4);
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return JSON.parse(await new Response(stream).text());
+}
+
+function render(p) {
+  const base = p.b * 60000;
+  const T = off => fmtT.format(new Date(base + off * 60000));
+  const segs = p.s.map(s => ({ from: s[0], to: s[1], legs: s.slice(2) }));
+  const first = segs[0].legs[0], lastSeg = segs[segs.length - 1], last = lastSeg.legs[lastSeg.legs.length - 1];
+  document.title = "RailNav — " + p.t;
+  let html = `<h1>${esc(p.t)}</h1><div class="sub">${fmtD.format(new Date(base))} · ${T(first[5])} → ${T(last[6])}</div>`;
+  segs.forEach((s, i) => {
+    const transit = s.legs.filter(l => l[0] !== WALK);
+    const d = s.legs[s.legs.length - 1][6] - s.legs[0][5];
+    html += `<div class="card">`;
+    if (segs.length > 1) html += `<div class="seg-title">${i + 1}. ${esc(s.from)} → ${esc(s.to)}</div>`;
+    html += `<div class="seg-meta">${T(s.legs[0][5])} – ${T(s.legs[s.legs.length - 1][6])} · ${dur(d)} · пересадок: ${Math.max(0, transit.length - 1)}</div>`;
+    for (const l of s.legs) {
+      const [prod, line, dir, a, b, dep, arr, pa, pb] = l;
+      const [, color] = PRODUCTS[prod] || ["", "#757575"];
+      const pl = x => x ? ` <span class="pl">пл. ${esc(x)}</span>` : "";
+      const mid = prod === WALK
+        ? `<span>🚶 пешком ${dur(arr - dep)}</span>`
+        : `<span class="badge" style="background:${color}">${esc(line)}</span><span>${dir ? "→ " + esc(dir) : ""}</span>`;
+      html += `<div class="leg">
+        <div class="t">${T(dep)}</div><div class="bar" style="background:${color}"></div><div class="st">${esc(p.n[a])}${pl(pa)}</div>
+        <div></div><div class="mid">${mid}</div>
+        <div class="t">${T(arr)}</div><div class="st">${esc(p.n[b])}${pl(pb)}</div>
+      </div>`;
+    }
+    if (i < segs.length - 1) {
+      const stay = segs[i + 1].legs[0][5] - s.legs[s.legs.length - 1][6];
+      html += `<div class="stay">⏱ В ${esc(s.to)}: ${dur(stay)}</div>`;
+    }
+    html += `</div>`;
+  });
+  html += `<p class="note">Время по расписанию на момент отправки ссылки. Актуальные опоздания и платформы — в приложении.</p>`;
+  return html;
+}
+
+async function show() {
+  const content = document.getElementById("content");
+  const m = location.hash.match(/r=([A-Za-z0-9_-]+)/);
+  document.getElementById("open").hidden = true;
+  if (!m) {
+    content.innerHTML = `<h1>RailNav</h1><div class="sub">Маршруты по железной дороге — приложение для Android</div>
+      <div class="card"><ul>
+        <li>все варианты маршрута сразу на карте;</li>
+        <li>поездки через несколько городов и «путешествие» с возвратом домой;</li>
+        <li>выбор транспорта: ICE, IC, RE, RB, S-Bahn и другие;</li>
+        <li>табло отправлений и прибытий, реальное время;</li>
+        <li>офлайн-расписание, уведомления о пересадках и опозданиях;</li>
+        <li>ссылки на маршрут, как эта страница.</li></ul></div>`;
+    return;
+  }
+  try {
+    const plan = await decode(m[1]);
+    content.innerHTML = render(plan);
+    const open = document.getElementById("open");
+    const fallback = encodeURIComponent(document.getElementById("apk").href);
+    const ua = navigator.userAgent;
+    open.href = /Android/i.test(ua)
+      ? `intent://plan?r=${m[1]}#Intent;scheme=railnav;package=de.railnav;S.browser_fallback_url=${fallback};end`
+      : `railnav://plan?r=${m[1]}`;
+    open.hidden = false;
+  } catch (e) {
+    content.innerHTML = `<h1>Не удалось открыть маршрут</h1><p class="err">Ссылка повреждена или браузер слишком старый.</p>`;
+  }
+}
+show();
+window.addEventListener("hashchange", show);
+</script>
+</body>
+</html>
