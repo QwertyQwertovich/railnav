@@ -148,7 +148,7 @@ class TransitousProvider(private val base: String = "https://api.transitous.org"
     }
 
     override suspend fun mainStations(city: Place, radiusKm: Double, products: Set<Product>): List<Place> {
-        val r = radiusKm.coerceIn(3.0, 10.0)
+        val r = radiusKm.coerceIn(2.5, 20.0)
         val dLat = r / 111.0; val dLon = r / (111.0 * Math.cos(Math.toRadians(city.lat)))
         val arr = get("/api/v6/map/stops", listOf(
             "min" to String.format(Locale.US, "%.5f,%.5f", city.lat - dLat, city.lon - dLon),

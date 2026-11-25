@@ -156,6 +156,11 @@ class Settings(ctx: Context) {
         set(v) = sp.edit().putInt("notifyArr", v).apply()
 
     /** Cities are routed via their main stations (Hbf / most important) instead of any stop in the radius. */
+    /** Radius per city from the built-in table (falls back to [cityRadiusKm]). */
+    var cityRadiusAuto: Boolean
+        get() = sp.getBoolean("cityRadiusAuto", true)
+        set(v) = sp.edit().putBoolean("cityRadiusAuto", v).apply()
+
     var cityMainStations: Boolean
         get() = sp.getBoolean("cityMain", true)
         set(v) = sp.edit().putBoolean("cityMain", v).apply()

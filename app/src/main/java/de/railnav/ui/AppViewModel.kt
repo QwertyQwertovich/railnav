@@ -216,21 +216,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun searchPlaces(q: String): List<Place> {
         val res = provider().searchPlaces(q)
         val radius = settings.cityRadiusKm.toDouble()
+        fun r(p: Place) = cityRadius(p).takeIf { it > 0 } ?: radius
         // Offer "any station of the city" for the best station hit.
         val firstStop = res.firstOrNull { !it.isCity }
-        val list = if (res.any { it.isCity }) res.map { if (it.isCity) it.copy(radiusKm = radius) else it }
-        else (if (firstStop != null) listOf(firstStop.asCity(radius)) else emptyList()) + res
+        val list = if (res.any { it.isCity }) res.map { if (it.isCity) it.copy(radiusKm = r(it)) else it }
+        else (if (firstStop != null) listOf(firstStop.asCity(radius).let { c -> c.copy(radiusKm = r(c)) }) else emptyList()) + res
         // Main stations (Hbf) on top, keeping the provider's order otherwise.
         fun isHbf(p: Place) = !p.isCity && Regex("Hbf|Hauptbahnhof", RegexOption.IGNORE_CASE).containsMatchIn(p.name) &&
             p.region?.endsWith(")") != true
         return list.withIndex().sortedWith(compareBy({ if (isHbf(it.value)) 0 else 1 }, { it.index })).map { it.value }
     }
 
+    /** Auto radius from the city table, else the default from settings. */
+    fun cityRadius(p: Place): Double {
+        if (!p.isCity) return 0.0
+        val auto = if (settings.cityRadiusAuto) de.railnav.store.CityRadius.lookup(getApplication(), p) else null
+        return auto ?: settings.cityRadiusKm.toDouble()
+    }
+
+    /** Re-apply the current radius rule to (possibly older, saved) city places before searching. */
+    private fun fresh(p: Place) = if (p.isCity) p.copy(radiusKm = cityRadius(p)) else p
+
     fun rememberPlace(p: Place) { recentStore.add(p); recents = recentStore.all() }
 
     fun swap() { val o = origin; origin = destination; destination = o }
 
     fun search() {
+        origin = origin?.let { fresh(it) }; destination = destination?.let { fresh(it) }
+        for (k in vias.indices) vias[k] = vias[k].copy(place = fresh(vias[k].place))
+        boardPlace = boardPlace?.let { fresh(it) }
         val o = origin ?: run { error = "Укажите, откуда ехать"; return }
         if (travelMode && vias.isEmpty()) { error = "Добавьте хотя бы один город для поездки"; return }
         // Round trip without a separate destination: the last stop is where you turn back.

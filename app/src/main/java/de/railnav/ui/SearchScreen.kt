@@ -582,7 +582,8 @@ private fun PlaceRow(vm: AppViewModel, p: Place, icon: androidx.compose.ui.graph
     ListItem(
         headlineContent = { Text(if (p.isCity) "${p.name} — любой вокзал" else p.name) },
         supportingContent = {
-            Text(listOfNotNull(if (p.isCity) "город" else "станция", p.region).joinToString(" · "), fontSize = 12.sp, maxLines = 1,
+            Text(listOfNotNull(if (p.isCity) "город" else "станция", p.region,
+                if (p.isCity && p.radiusKm > 0) "≈ ${"%.0f".format(p.radiusKm)} км" else null).joinToString(" · "), fontSize = 12.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         },
         leadingContent = { Icon(icon, null) },

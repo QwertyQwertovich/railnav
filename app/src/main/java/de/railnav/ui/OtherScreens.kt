@@ -131,7 +131,16 @@ fun SettingsScreen(vm: AppViewModel) {
             Column(Modifier.padding(12.dp)) {
                 Text("Мин. время пересадки: ${minTr.toInt()} мин", fontSize = 14.sp)
                 Slider(minTr, { minTr = it }, valueRange = 0f..20f, steps = 19, onValueChangeFinished = { s.minTransferMin = minTr.toInt() })
-                Text("Радиус «любой вокзал города»: ${radius.toInt()} км", fontSize = 14.sp)
+                var autoR by remember { mutableStateOf(s.cityRadiusAuto) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Авторадиус города", fontSize = 14.sp)
+                        Text("по площади города из встроенного списка (~1500 городов): Берлин ≈ 19 км, Йена ≈ 7 км",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(autoR, { autoR = it; s.cityRadiusAuto = it })
+                }
+                Text(if (autoR) "Радиус для городов не из списка: ${radius.toInt()} км" else "Радиус «любой вокзал города»: ${radius.toInt()} км", fontSize = 14.sp)
                 Slider(radius, { radius = it }, valueRange = 3f..30f, onValueChangeFinished = { s.cityRadiusKm = radius.toInt() })
             }
         }
