@@ -81,7 +81,9 @@ class TransitousProvider(private val base: String = "https://api.transitous.org"
             }
         }
         // Cities derived from station areas ("Brandenburg an der Havel"), unless already offered as a PLACE nearby.
+        val token = query.trim().split(' ', ',', '-').firstOrNull { it.length >= 3 }?.lowercase()
         for (c in cityFromStops.values) {
+            if (token != null && !c.name.lowercase().contains(token)) continue
             val dup = places.any { it.isCity && (it.name == c.name || de.railnav.model.distanceKm(it.pos, c.pos) < 4.0) }
             if (!dup) places += c
         }

@@ -200,7 +200,7 @@ object Share {
     const val SHARE_BASE = "https://qwertyqwertovich.github.io/railnav/"
     private const val B64 = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
 
-    enum class Style(val label: String) { LINK("Только ссылка"), SHORT("Кратко"), FULL("Подробно") }
+    enum class Style(val label: String) { LINK("Ссылка"), SHORT("Кратко"), FULL("Подробно") }
 
     fun shortText(p: TripPlan): String = buildString {
         val d = Instant.ofEpochMilli(p.dep).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EE dd.MM.", java.util.Locale("ru")))
