@@ -164,6 +164,36 @@ fun SettingsScreen(vm: AppViewModel) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
             }
         }
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                var cityMain by remember { mutableStateOf(s.cityMainStations) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Город — основные вокзалы", fontSize = 14.sp)
+                        Text("Halle → Hbf; где нет Hbf (Jena) — главные станции. Выкл.: любая станция в радиусе.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(cityMain, { cityMain = it; s.cityMainStations = it })
+                }
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                var auto by remember { mutableStateOf(s.autoUpdateCheck) }
+                Text("Обновления · версия ${de.railnav.store.Updates.currentVersion}", fontWeight = FontWeight.Medium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Проверять автоматически", Modifier.weight(1f), fontSize = 14.sp)
+                    Switch(auto, { auto = it; s.autoUpdateCheck = it; de.railnav.store.Updates.scheduleDaily(ctx, it) })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { vm.checkForUpdate(manual = true) }) { Text("Проверить сейчас") }
+                    if (vm.update != null) Button(onClick = { vm.updateDialog = true }) { Text("Обновить до ${vm.update!!.version}") }
+                }
+                vm.updateStatus?.let { Text(it, fontSize = 13.sp) }
+            }
+        }
+
         Text(
             "Данные: Transitous / MOTIS (transitous.org), gtfs.de, © OpenStreetMap contributors.",
             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant

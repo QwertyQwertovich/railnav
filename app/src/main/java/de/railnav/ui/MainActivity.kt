@@ -14,6 +14,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.DepartureBoard
@@ -41,6 +43,8 @@ class MainActivity : ComponentActivity() {
         TripNotifications.createChannels(this)
         enableEdgeToEdge()
         handleIntent(intent)
+        vm.checkForUpdate()
+        de.railnav.store.Updates.scheduleDaily(this, vm.settings.autoUpdateCheck)
         setContent { RailNavTheme { App(vm, ::requestNotifications) } }
     }
 
@@ -51,6 +55,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(i: Intent?) {
         i ?: return
+        if (i.getBooleanExtra("update", false)) { vm.checkForUpdate(manual = true); return }
         i.getStringExtra("plan")?.let { vm.openSaved(it, i.getBooleanExtra("alternatives", false)); return }
         vm.importLink(i)
     }
@@ -73,6 +78,7 @@ fun RailNavTheme(content: @Composable () -> Unit) {
 @Composable
 fun App(vm: AppViewModel, requestNotifications: () -> Unit) {
     BackHandler(enabled = vm.stack.size > 1) { vm.back() }
+    UpdateDialog(vm)
     val top = vm.screen
     val showBar = top == Screen.Search || top == Screen.Saved || top == Screen.Settings || top == Screen.Board
     Scaffold(bottomBar = {
@@ -97,4 +103,33 @@ fun App(vm: AppViewModel, requestNotifications: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+fun UpdateDialog(vm: AppViewModel) {
+    val info = vm.update ?: return
+    if (!vm.updateDialog) return
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!vm.updating) vm.updateDialog = false },
+        title = { Text("Доступна RailNav ${info.version}") },
+        text = {
+            androidx.compose.foundation.layout.Column {
+                Text("Установлена версия ${de.railnav.store.Updates.currentVersion}.")
+                if (info.notes.isNotBlank()) Text(info.notes.take(600), modifier = Modifier.padding(top = 8.dp),
+                    fontSize = androidx.compose.ui.unit.TextUnit(13f, androidx.compose.ui.unit.TextUnitType.Sp))
+                if (vm.updating) {
+                    val p = vm.updateProgress
+                    if (p != null) androidx.compose.material3.LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+                    else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
+                }
+                vm.updateStatus?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { vm.installUpdate() }, enabled = !vm.updating) { Text("Обновить") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = { vm.updateDialog = false }, enabled = !vm.updating) { Text("Позже") }
+        }
+    )
 }

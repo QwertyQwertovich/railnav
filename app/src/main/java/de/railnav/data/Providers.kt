@@ -49,6 +49,8 @@ class FallbackProvider(private val primary: Provider, private val offline: Offli
     }
 
     override suspend fun refreshLeg(leg: de.railnav.model.Leg) = primary.refreshLeg(leg)
+    override suspend fun mainStations(city: Place, radiusKm: Double, products: Set<de.railnav.model.Product>) =
+        try { primary.mainStations(city, radiusKm, products) } catch (e: ProviderException) { emptyList() }
     override suspend fun trip(tripId: String) =
         if (tripId.startsWith("off:")) offline.trip(tripId) else primary.trip(tripId)
 

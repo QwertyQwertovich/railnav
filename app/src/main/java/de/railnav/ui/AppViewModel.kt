@@ -144,6 +144,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tab(Screen.Search)
     }
     var stayAtDestMin by mutableStateOf(120)
+    var destPriority by mutableStateOf(2)
     var recents by mutableStateOf(recentStore.all())
 
     // results
@@ -174,12 +175,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var job: Job? = null
 
+    // app updates
+    var update by mutableStateOf<de.railnav.store.UpdateInfo?>(null)
+    var updateDialog by mutableStateOf(false)
+    var updateProgress by mutableStateOf<Float?>(null)
+    var updating by mutableStateOf(false)
+    var updateStatus by mutableStateOf<String?>(null)
+
+    /** Startup check (at most every 12 h) or a manual check from settings. */
+    fun checkForUpdate(manual: Boolean = false) {
+        if (!manual && (!settings.autoUpdateCheck || System.currentTimeMillis() - settings.lastUpdateCheck < 12 * 3600_000L)) return
+        viewModelScope.launch {
+            if (manual) updateStatus = "Проверяю…"
+            val info = runCatching { de.railnav.store.Updates.check() }.getOrNull()
+            settings.lastUpdateCheck = System.currentTimeMillis()
+            update = info
+            if (info != null) updateDialog = true
+            if (manual) updateStatus = if (info == null) "У вас последняя версия (${de.railnav.store.Updates.currentVersion})" else null
+        }
+    }
+
+    fun installUpdate() {
+        val info = update ?: return
+        if (updating) return
+        updating = true; updateStatus = "Скачиваю ${info.version}…"
+        viewModelScope.launch {
+            val err = de.railnav.store.Updates.downloadAndInstall(getApplication(), info) { updateProgress = it }
+            updating = false; updateProgress = null
+            updateStatus = err ?: "Подтвердите установку в системном окне"
+        }
+    }
+
     private fun provider(): Provider {
         val p = Providers.get(getApplication(), settings.provider)
         return if (p.id != "offline" && settings.offlineFallback) FallbackProvider(p, Providers.offline(getApplication())) else p
     }
 
-    private fun planner(p: Provider = provider()) = TripPlanner(p, settings.cityRadiusKm.toDouble())
+    private fun planner(p: Provider = provider()) = TripPlanner(p, settings.cityRadiusKm.toDouble(), settings.cityMainStations)
 
     suspend fun searchPlaces(q: String): List<Place> {
         val res = provider().searchPlaces(q)
@@ -219,6 +251,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     returnTime = if ((roundTrip || travelMode) && returnMode != ReturnMode.EARLIEST) returnTime else null,
                     returnMode = if (roundTrip || travelMode) returnMode else ReturnMode.EARLIEST,
                     minStayAtDestinationMin = if (roundTrip && !travelMode) stayAtDestMin else 0,
+                    destinationPriority = destPriority,
                     circular = travelMode,
                     minTransferMin = settings.minTransferMin,
                 )

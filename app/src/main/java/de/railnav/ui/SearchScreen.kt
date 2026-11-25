@@ -139,7 +139,8 @@ fun SearchScreen(vm: AppViewModel) {
                                     onPick = { picker = "via:$i" },
                                     onStay = { m -> vm.vias[i] = w.copy(minStayMin = m) },
                                     onMaxStay = { m -> vm.vias[i] = w.copy(maxStayMin = m) },
-                                    onRemove = { vm.vias.removeAt(i) })
+                                    onRemove = { vm.vias.removeAt(i) },
+                                    onPriority = { p -> vm.vias[i] = w.copy(priority = p) })
                             }
                             if (!vm.travel) PlaceField(
                                 if (vm.roundTrip) "Куда (самая дальняя точка)" else "Куда", vm.destination,
@@ -197,7 +198,13 @@ fun SearchScreen(vm: AppViewModel) {
                         else -> "в одну сторону"
                     })
                     if (vm.roundTrip || vm.travel) {
-                        if (!vm.travel) StayPicker("Минимум в конечной точке", vm.stayAtDestMin) { vm.stayAtDestMin = it }
+                        if (!vm.travel) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("В конечной точке:", fontSize = 14.sp)
+                            Spacer(Modifier.width(4.dp))
+                            StayChoice("мин", vm.stayAtDestMin) { vm.stayAtDestMin = it }
+                            Spacer(Modifier.weight(1f))
+                            PriorityChoice(vm.destPriority) { vm.destPriority = it }
+                        }
                         Text(if (vm.travel) "Домой:" else "Обратно:", fontWeight = FontWeight.Medium)
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                             val modes = listOf(ReturnMode.EARLIEST to "Рано", ReturnMode.NOT_BEFORE to "Не раньше", ReturnMode.LATEST to "Поздно")
@@ -405,14 +412,15 @@ private fun PlaceField(label: String, place: Place?, placeholder: String? = null
 }
 
 @Composable
-private fun ViaRow(i: Int, w: Waypoint, label: String, onPick: () -> Unit, onStay: (Int) -> Unit, onMaxStay: (Int?) -> Unit, onRemove: () -> Unit) {
+private fun ViaRow(i: Int, w: Waypoint, label: String, onPick: () -> Unit, onStay: (Int) -> Unit, onMaxStay: (Int?) -> Unit, onRemove: () -> Unit,
+                   onPriority: (Int) -> Unit = {}) {
     Column(Modifier.padding(start = 12.dp)) {
         PlaceField(label, w.place, onClear = onRemove, onClick = onPick)
         // min and max stay on one line
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Стоянка:", fontSize = 14.sp)
-            Spacer(Modifier.width(4.dp))
             StayChoice("мин", w.minStayMin, onChange = onStay)
+            Spacer(Modifier.weight(1f))
+            PriorityChoice(w.priority, onPriority)
             Spacer(Modifier.weight(1f))
             StayChoice("макс", w.maxStayMin ?: -1, allowNone = true) { onMaxStay(if (it < 0) null else it) }
         }
@@ -430,6 +438,24 @@ private fun StayChoice(label: String, value: Int, allowNone: Boolean = false, on
         DropdownMenu(open, { open = false }) {
             if (allowNone) DropdownMenuItem(text = { Text("любая") }, onClick = { onChange(-1); open = false })
             for (m in STAY_OPTIONS) DropdownMenuItem(text = { Text(stayLabel(m)) }, onClick = { onChange(m); open = false })
+        }
+    }
+}
+
+/** Priority of a stop when spare time is shared out (only matters with a fixed return time). */
+@Composable
+private fun PriorityChoice(value: Int, onChange: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val labels = mapOf(1 to "★", 2 to "★★", 3 to "★★★")
+    Box {
+        TextButton(onClick = { open = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) {
+            Text(labels[value] ?: "★★", fontSize = 14.sp, maxLines = 1)
+        }
+        DropdownMenu(open, { open = false }) {
+            Text("Приоритет: сколько свободного времени\nдостанется этому городу", fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            for ((k, l) in listOf(1 to "★  низкий", 2 to "★★  обычный", 3 to "★★★  высокий"))
+                DropdownMenuItem(text = { Text(l) }, onClick = { onChange(k); open = false })
         }
     }
 }

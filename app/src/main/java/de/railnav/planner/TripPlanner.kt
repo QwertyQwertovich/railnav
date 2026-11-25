@@ -17,25 +17,59 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
 
-class TripPlanner(private val provider: Provider, private val defaultCityRadiusKm: Double) {
+class TripPlanner(
+    private val provider: Provider,
+    private val defaultCityRadiusKm: Double,
+    /** Route cities via their main stations (Hbf / most important) instead of any stop in the radius. */
+    private val useMainStations: Boolean = true,
+) {
 
     private val cache = HashMap<String, JourneyPage>()
+    private val mainCache get() = MainStationCache.map
 
     private fun withRadius(p: Place) = if (p.isCity && p.radiusKm <= 0.0) p.copy(radiusKm = defaultCityRadiusKm) else p
 
-    /** Simple A→B search (with "any station of the city" trimming and exact product filtering). */
+    /** City -> its main stations (cached), or the city itself when the provider can't tell. */
+    private suspend fun expand(p: Place, products: Set<Product>): List<Place> {
+        if (!p.isCity || !useMainStations) return listOf(p)
+        val key = "${provider.id}|${p.name}|${p.lat}|${products.any { it == Product.HIGHSPEED || it == Product.LONG_DISTANCE }}"
+        mainCache[key]?.let { return it }
+        val mains = runCatching { provider.mainStations(p, p.radiusKm, products) }.getOrDefault(emptyList())
+        return (mains.ifEmpty { listOf(p) }).also { mainCache[key] = it }
+    }
+
+    /** Simple A->B search (cities via main stations, exact product filtering). */
     suspend fun search(q: JourneyQuery): JourneyPage {
         val from = withRadius(provider.resolve(q.from)); val to = withRadius(provider.resolve(q.to))
         val key = listOf(provider.id, from.id ?: from.pos, to.id ?: to.pos, q.time / 60000, q.arriveBy, q.products.sorted(),
-            q.pageCursor, q.minTransferMin, q.count).joinToString()
+            q.pageCursor, q.minTransferMin, q.count, useMainStations).joinToString()
         cache[key]?.let { return it }
         // RE vs RB is filtered client-side: ask for more results when only one of them is wanted.
         val partial = (Product.REGIONAL in q.products) != (Product.REGIONAL_EXPRESS in q.products)
-        val page = provider.journeys(q.copy(from = from, to = to, count = if (partial) q.count + 4 else q.count))
-        val trimmed = page.journeys.map { trimForCity(it, from, to) }
-            .filter { it.legs.isNotEmpty() && it.matches(q.products) }
+        val froms = expand(from, q.products); val tos = expand(to, q.products)
+        val combos = froms.flatMap { f -> tos.map { t -> f to t } }.take(4)
+        if (combos.size == 1) {
+            val (f, t) = combos[0]
+            val page = provider.journeys(q.copy(from = f, to = t, count = if (partial) q.count + 4 else q.count))
+            val trimmed = page.journeys.map { trimForCity(it, f, t) }
+                .filter { it.legs.isNotEmpty() && it.matches(q.products) }
+                .distinctBy { it.signature }
+            return page.copy(journeys = trimmed).also { cache[key] = it }
+        }
+        // Several main stations (e.g. Jena Paradies / West / Goeschwitz): query each pair and merge.
+        val all = ArrayList<Journey>()
+        for ((f, t) in combos) {
+            runCatching { provider.journeys(q.copy(from = f, to = t, pageCursor = null, count = q.count)) }
+                .getOrNull()?.journeys?.let { all += it }
+        }
+        val merged = all.filter { it.legs.isNotEmpty() && it.matches(q.products) }
             .distinctBy { it.signature }
-        return page.copy(journeys = trimmed).also { cache[key] = it }
+            // drop dominated options: another one leaves no earlier and arrives no later
+            .let { js -> js.filter { j -> js.none { k -> k !== j && k.dep >= j.dep && k.arr <= j.arr && (k.dep > j.dep || k.arr < j.arr) } } }
+            .sortedBy { if (q.arriveBy) -it.arr else it.dep }
+            .take(q.count + 2)
+            .sortedBy { it.dep }
+        return JourneyPage(merged).also { cache[key] = it }
     }
 
     /**
@@ -56,10 +90,54 @@ class TripPlanner(private val provider: Provider, private val defaultCityRadiusK
             try {
                 for (i in 1 until stops.size - 1) segs += nextSegment(req, stops, i, segs.last().journey.arr)
             } catch (e: ProviderException) { lastError = e.message; continue }
-            plans += TripPlan(UUID.randomUUID().toString(), title(stops), segs, req)
+            var plan = TripPlan(UUID.randomUUID().toString(), title(stops), segs, req)
+            plan = runCatching { distribute(req, stops, plan) }.getOrDefault(plan)
+            plans += plan
         }
         if (plans.isEmpty()) throw ProviderException(lastError ?: "Не удалось связать все участки поездки")
         return plans.distinctBy { p -> p.segments.joinToString { it.journey.signature } }
+    }
+
+    /**
+     * When the way home is fixed in time (latest / not before), the greedy chain piles all spare time
+     * into the last city. Spread it over the cities by their priority instead: city k gets
+     * spare * weight_k / sum(weights) on top of its minimum stay (capped by its maximum). Each segment still
+     * takes the earliest-arriving connection after that time, so no pointless detours.
+     */
+    private suspend fun distribute(req: PlanRequest, stops: List<Waypoint>, base: TripPlan): TripPlan {
+        if (!(req.roundTrip || req.circular) || req.returnMode == ReturnMode.EARLIEST) return base
+        val segs = base.segments
+        val n = segs.size
+        if (n < 3) return base // only one city: all spare time belongs to it anyway
+        val cities = (1 until n).map { stops[it] }
+        val lastArr = segs[n - 2].journey.arr
+        val spare = segs[n - 1].journey.dep - (lastArr + cities.last().minStayMin * 60_000L)
+        if (spare < 30 * 60_000L) return base
+        val total = cities.sumOf { it.weight }
+        for (factor in listOf(1.0, 0.8, 0.6, 0.4)) {
+            val out = ArrayList<Segment>(); out += segs[0]
+            var arr = segs[0].journey.arr
+            var failed = false
+            for (k in 1 until n - 1) {
+                val wp = stops[k]
+                var extra = (spare * factor * wp.weight / total).toLong()
+                wp.maxStayMin?.let { mx -> extra = minOf(extra, maxOf(0L, (mx - wp.minStayMin) * 60_000L)) }
+                val t = arr + wp.minStayMin * 60_000L + extra
+                val opts = segmentOptions(req, wp.place, stops[k + 1].place, t, arriveBy = false)
+                val c = opts.firstOrNull()
+                if (c == null) { failed = true; break }
+                out += Segment(wp.place, stops[k + 1].place, c, opts.drop(1).take(6), t)
+                arr = c.arr
+            }
+            if (failed) continue
+            val back = runCatching { nextSegment(req, stops, n - 1, arr) }.getOrNull() ?: continue
+            // accept only if the way home is still (about) the late one
+            if (back.journey.dep >= segs[n - 1].journey.dep - 3600_000L) {
+                out += back
+                return base.copy(segments = out)
+            }
+        }
+        return base
     }
 
     private fun title(stops: List<Waypoint>) = buildString {
@@ -129,7 +207,7 @@ class TripPlanner(private val provider: Provider, private val defaultCityRadiusK
     /** Waypoint order: given order, or the shortest (great-circle) tour if the order is free. */
     fun orderedStops(req: PlanRequest): List<Waypoint> {
         val origin = Waypoint(req.origin)
-        val dest = Waypoint(req.destination, req.minStayAtDestinationMin)
+        val dest = Waypoint(req.destination, req.minStayAtDestinationMin, priority = req.destinationPriority)
         var vias = req.vias
         if (!req.strictOrder && vias.size > 1) {
             vias = bestOrder(req.origin, vias, req.destination, req.roundTrip)
@@ -186,3 +264,6 @@ class TripPlanner(private val provider: Provider, private val defaultCityRadiusK
         }
     }
 }
+
+/** Main stations per city, shared between planner instances for the app session. */
+object MainStationCache { val map = HashMap<String, List<Place>>() }

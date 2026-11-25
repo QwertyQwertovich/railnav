@@ -118,4 +118,25 @@ class OnlineProviderTest {
         val buf = ByteArray(raw.size + 64); val n = def.deflate(buf); def.end()
         println("LINK q=" + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(buf.copyOf(n)))
     }
+
+    @Test
+    fun mainStationsAndPriorities() = runBlocking {
+        assumeTrue(System.getProperty("online") == "true")
+        val p = TransitousProvider()
+        fun city(q: String, name: String) = runBlocking { p.searchPlaces(q).first { it.isCity && it.name == name }.copy(radiusKm = 12.0) }
+        val halle = city("Halle", "Halle"); val jena = city("Jena", "Jena"); val md = city("Magdeburg", "Magdeburg"); val lpz = city("Leipzig", "Leipzig")
+        for (c in listOf(halle, jena, lpz)) println("main ${c.name}: " + p.mainStations(c, 12.0, Product.railOnly).joinToString { it.name } +
+            " | regional only: " + p.mainStations(c, 12.0, Product.regionalOnly).joinToString { it.name })
+        var d = LocalDate.now().plusDays(1); while (d.dayOfWeek.value != 6) d = d.plusDays(1)
+        val time = d.atTime(8, 0).atZone(z).toInstant().toEpochMilli()
+        println("Halle -> Jena:")
+        TripPlanner(p, 12.0).search(JourneyQuery(halle, jena, time, products = Product.railOnly)).journeys.take(4).forEach(::print)
+        for ((label, prio) in listOf("equal" to listOf(2, 2), "Leipzig high" to listOf(1, 3))) {
+            val plan = TripPlanner(p, 12.0).plan(PlanRequest(origin = halle, destination = halle,
+                vias = listOf(Waypoint(md, 60, priority = prio[0]), Waypoint(lpz, 60, priority = prio[1])), strictOrder = true,
+                time = time, circular = true, returnMode = ReturnMode.LATEST, products = Product.railOnly), variants = 1).first()
+            println("=== $label: " + (0 until plan.segments.size - 1).joinToString { i -> "${plan.segments[i].to.name} ${plan.stayMin(i)} min" } +
+                " | home ${t(plan.arr)}")
+        }
+    }
 }

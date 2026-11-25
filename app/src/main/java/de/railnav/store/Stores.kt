@@ -155,6 +155,23 @@ class Settings(ctx: Context) {
         get() = sp.getInt("notifyArr", 5)
         set(v) = sp.edit().putInt("notifyArr", v).apply()
 
+    /** Cities are routed via their main stations (Hbf / most important) instead of any stop in the radius. */
+    var cityMainStations: Boolean
+        get() = sp.getBoolean("cityMain", true)
+        set(v) = sp.edit().putBoolean("cityMain", v).apply()
+
+    var autoUpdateCheck: Boolean
+        get() = sp.getBoolean("updCheck", true)
+        set(v) = sp.edit().putBoolean("updCheck", v).apply()
+
+    var notifiedVersion: String?
+        get() = sp.getString("updNotified", null)
+        set(v) = sp.edit().putString("updNotified", v).apply()
+
+    var lastUpdateCheck: Long
+        get() = sp.getLong("updLast", 0)
+        set(v) = sp.edit().putLong("updLast", v).apply()
+
     var offlineAutoUpdate: Boolean
         get() = sp.getBoolean("offlineAuto", false)
         set(v) = sp.edit().putBoolean("offlineAuto", v).apply()

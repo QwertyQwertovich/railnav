@@ -147,6 +147,35 @@ class TransitousProvider(private val base: String = "https://api.transitous.org"
             .sortedBy { it.time(arrivals) ?: 0L }
     }
 
+    override suspend fun mainStations(city: Place, radiusKm: Double, products: Set<Product>): List<Place> {
+        val r = radiusKm.coerceIn(3.0, 10.0)
+        val dLat = r / 111.0; val dLon = r / (111.0 * Math.cos(Math.toRadians(city.lat)))
+        val arr = get("/api/v6/map/stops", listOf(
+            "min" to String.format(Locale.US, "%.5f,%.5f", city.lat - dLat, city.lon - dLon),
+            "max" to String.format(Locale.US, "%.5f,%.5f", city.lat + dLat, city.lon + dLon),
+        )).jsonArray
+        val railModes = setOf("HIGHSPEED_RAIL", "LONG_DISTANCE", "NIGHT_RAIL", "REGIONAL_RAIL", "REGIONAL_FAST_RAIL", "SUBURBAN", "RAIL")
+        val wantLong = products.any { it == Product.HIGHSPEED || it == Product.LONG_DISTANCE || it == Product.NIGHT }
+        data class C(val p: Place, val score: Double, val hbf: Boolean)
+        val token = city.name.split(' ', '(', ',', '-').firstOrNull { it.length >= 3 }?.lowercase().orEmpty()
+        val cands = arr.mapNotNull { e ->
+            val o = e.jsonObject
+            val modes = o["modes"]?.jsonArray?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty().toSet()
+            if (modes.none { it in railModes }) return@mapNotNull null
+            val name = o.str("name") ?: return@mapNotNull null
+            if (name.contains("FlixTrain") || name.contains("Central Station")) return@mapNotNull null
+            val imp = o.dbl("importance") ?: 0.0
+            val long = modes.any { it == "HIGHSPEED_RAIL" || it == "LONG_DISTANCE" }
+            val hbf = Regex("Hbf|Hauptbahnhof", RegexOption.IGNORE_CASE).containsMatchIn(name) && name.lowercase().contains(token)
+            C(Place(id = o.str("parentId") ?: o.str("stopId"), name = name, lat = o.dbl("lat") ?: 0.0, lon = o.dbl("lon") ?: 0.0, provider = id),
+                imp * (if (long && wantLong) 2.0 else 1.0), hbf)
+        }.groupBy { it.p.name.replace(", Hauptbahnhof", " Hbf") }.map { (_, v) -> v.maxBy { it.score } }
+        cands.filter { it.hbf }.maxByOrNull { it.score }?.let { return listOf(it.p) }
+        val sorted = cands.sortedByDescending { it.score }
+        val best = sorted.firstOrNull()?.score ?: return emptyList()
+        return sorted.filter { it.score >= best * 0.3 }.take(4).map { it.p }
+    }
+
     override suspend fun trip(tripId: String): Leg? {
         val it = get("/api/v6/trip", listOf("tripId" to tripId)).jsonObject
         return parseItinerary(it)?.legs?.firstOrNull { !it.isWalk }

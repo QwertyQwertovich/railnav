@@ -178,7 +178,11 @@ data class Waypoint(
     val place: Place,
     val minStayMin: Int = 0,
     val maxStayMin: Int? = null,
-)
+    /** Share of spare time this stop gets: 1 = low, 2 = normal, 3 = high. */
+    val priority: Int = 2,
+) {
+    val weight get() = when (priority) { 1 -> 1.0; 3 -> 4.0; else -> 2.0 }
+}
 
 @Serializable
 enum class ReturnMode { EARLIEST, NOT_BEFORE, LATEST }
@@ -199,6 +203,7 @@ data class PlanRequest(
     /** Travel mode: origin → vias → back to origin (destination == origin); the last segment is the way home. */
     val circular: Boolean = false,
     val minStayAtDestinationMin: Int = 0,
+    val destinationPriority: Int = 2,
     val minTransferMin: Int = 4,
     val maxTransfers: Int? = null,
 ) {
