@@ -31,10 +31,14 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin: 12px 0; }
   .seg-title { font-weight: 700; margin-bottom: 4px; }
   .seg-meta { color: var(--muted); font-size: 14px; margin-bottom: 10px; }
-  .leg { display: grid; grid-template-columns: 52px 6px 1fr; gap: 0 10px; margin: 6px 0; }
-  .t { font-weight: 700; font-variant-numeric: tabular-nums; }
-  .bar { border-radius: 3px; grid-row: 1 / span 3; }
+  .leg { display: grid; grid-template-columns: 52px 6px 1fr; grid-template-rows: auto auto auto; gap: 0 10px; margin: 8px 0; }
+  .t { font-weight: 700; font-variant-numeric: tabular-nums; grid-column: 1; }
+  .t.a { grid-row: 1; } .t.b { grid-row: 3; }
+  .bar { border-radius: 3px; grid-column: 2; grid-row: 1 / 4; }
+  .st { grid-column: 3; } .st.a { grid-row: 1; } .st.b { grid-row: 3; }
+  .mid { grid-column: 3; grid-row: 2; }
   .st { font-weight: 600; }
+  .st, .mid { min-width: 0; overflow-wrap: anywhere; }
   .pl { color: var(--muted); font-weight: 400; font-size: 14px; }
   .mid { padding: 6px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
   .badge { color: #fff; font-weight: 700; font-size: 13px; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
@@ -103,9 +107,9 @@ function render(p) {
         ? `<span>🚶 пешком ${dur(arr - dep)}</span>`
         : `<span class="badge" style="background:${color}">${esc(line)}</span><span>${dir ? "→ " + esc(dir) : ""}</span>`;
       html += `<div class="leg">
-        <div class="t">${T(dep)}</div><div class="bar" style="background:${color}"></div><div class="st">${esc(p.n[a])}${pl(pa)}</div>
-        <div></div><div class="mid">${mid}</div>
-        <div class="t">${T(arr)}</div><div class="st">${esc(p.n[b])}${pl(pb)}</div>
+        <div class="t a">${T(dep)}</div><div class="bar" style="background:${color}"></div><div class="st a">${esc(p.n[a])}${pl(pa)}</div>
+        <div class="mid">${mid}</div>
+        <div class="t b">${T(arr)}</div><div class="st b">${esc(p.n[b])}${pl(pb)}</div>
       </div>`;
     }
     if (i < segs.length - 1) {
