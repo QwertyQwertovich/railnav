@@ -84,6 +84,7 @@ fun RouteMap(plans: List<TripPlan>, selected: Int, onSelect: (Int) -> Unit, modi
     val dark = isSystemInDarkTheme()
     val mapView = remember {
         MapLibre.getInstance(ctx.applicationContext)
+        MapLayers.load(ctx.applicationContext)
         if (!cacheConfigured) {
             cacheConfigured = true
             OfflineManager.getInstance(ctx.applicationContext).setMaximumAmbientCacheSize(400L * 1024 * 1024, null)
@@ -162,7 +163,15 @@ fun RouteMap(plans: List<TripPlan>, selected: Int, onSelect: (Int) -> Unit, modi
         }
     }
 
-    AndroidView(factory = { mapView }, modifier = modifier)
+    LaunchedEffect(ready, MapLayers.orm, MapLayers.opnv) {
+        val (_, style) = ready ?: return@LaunchedEffect
+        runCatching { MapLayers.apply(style) }
+    }
+
+    androidx.compose.foundation.layout.Box(modifier) {
+        AndroidView(factory = { mapView }, modifier = Modifier.matchParentSize())
+        MapLayersButton(Modifier.align(androidx.compose.ui.Alignment.TopEnd))
+    }
 }
 
 private fun addLayers(style: Style, dark: Boolean) {
@@ -181,11 +190,11 @@ private fun addLayers(style: Style, dark: Boolean) {
         lineColor("#808080"), lineWidth(3f), lineDasharray(arrayOf(1.5f, 1.5f))))
     // Intermediate stops: only when zoomed in enough to not clutter the map
     style.addLayer(CircleLayer("inter", SRC_INTER).withProperties(
-        circleRadius(3.5f), circleColor(casing), circleStrokeColor(get("color")), circleStrokeWidth(2f)).apply { minZoom = 9.5f })
+        circleRadius(3.5f), circleColor(casing), circleStrokeColor(get("color")), circleStrokeWidth(2f)).apply { minZoom = 8f })
     style.addLayer(SymbolLayer("inter-labels", SRC_INTER).withProperties(
         textField(get("label")), textFont(arrayOf("Noto Sans Regular")), textSize(11f),
         textColor(if (dark) "#BBBBBB" else "#505050"), textHaloColor(casing), textHaloWidth(1.4f),
-        textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(0.8f, 0f)), textOptional(true)).apply { minZoom = 11.5f })
+        textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(0.8f, 0f)), textOptional(true)).apply { minZoom = 10f })
     style.addLayer(CircleLayer("stops", SRC_STOPS).withProperties(
         circleRadius(get("r")), circleColor(casing), circleStrokeColor(get("color")), circleStrokeWidth(3f)))
     style.addLayer(SymbolLayer("stop-labels", SRC_STOPS).withProperties(
@@ -195,6 +204,16 @@ private fun addLayers(style: Style, dark: Boolean) {
     // Trains: coloured dot with white ring and the line name above
     style.addLayer(CircleLayer("trains", SRC_TRAINS).withProperties(
         circleRadius(9f), circleColor(get("color")), circleStrokeColor("#FFFFFF"), circleStrokeWidth(3f)))
+    // white arrow inside the dot, rotated in the direction of travel
+    style.addImage("train-arrow", arrowBitmap(), true)
+    style.addLayer(SymbolLayer("train-arrows", SRC_TRAINS).withProperties(
+        org.maplibre.android.style.layers.PropertyFactory.iconImage("train-arrow"),
+        org.maplibre.android.style.layers.PropertyFactory.iconRotate(get("bearing")),
+        org.maplibre.android.style.layers.PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+        org.maplibre.android.style.layers.PropertyFactory.iconColor("#FFFFFF"),
+        org.maplibre.android.style.layers.PropertyFactory.iconSize(0.55f),
+        org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap(true),
+        org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement(true)))
     style.addLayer(SymbolLayer("train-labels", SRC_TRAINS).withProperties(
         textField(get("label")), textFont(arrayOf("Noto Sans Bold")), textSize(12f),
         textColor(if (dark) "#FFFFFF" else "#101010"), textHaloColor(casing), textHaloWidth(2f),
@@ -222,14 +241,41 @@ private fun trainFeatures(plans: List<TripPlan>, selected: Int, now: Long): Feat
         for (l in p.allJourneys.flatMap { it.transitLegs }) {
             val raw = trainPosition(l, now) ?: continue
             // snap onto the track shape so the dot sits on the line, not on a straight chord
-            val pos = l.shape.minByOrNull { (it.lat - raw.lat) * (it.lat - raw.lat) + (it.lon - raw.lon) * (it.lon - raw.lon) } ?: raw
+            val shape = l.geometry()
+            val k = shape.indices.minByOrNull { (shape[it].lat - raw.lat) * (shape[it].lat - raw.lat) + (shape[it].lon - raw.lon) * (shape[it].lon - raw.lon) }
+            val pos = if (l.shape.size >= 2 && k != null) shape[k] else raw
+            // direction of travel: along the shape around the dot
+            val bearing = if (k != null && shape.size >= 2) {
+                val a = shape[if (k == shape.lastIndex) k - 1 else k]; val b = shape[if (k == shape.lastIndex) k else k + 1]
+                bearingDeg(a, b)
+            } else 0.0
             val f = Feature.fromGeometry(Point.fromLngLat(pos.lon, pos.lat))
+            f.addNumberProperty("bearing", bearing)
             f.addStringProperty("color", String.format("#%06X", productColor(l.product).toArgb() and 0xFFFFFF))
             f.addStringProperty("label", if (i == selected || plans.size == 1) l.line else "")
             out += f
         }
     }
     return FeatureCollection.fromFeatures(out)
+}
+
+private fun bearingDeg(a: LatLon, b: LatLon): Double {
+    val dy = b.lat - a.lat
+    val dx = (b.lon - a.lon) * Math.cos(Math.toRadians((a.lat + b.lat) / 2))
+    return (Math.toDegrees(Math.atan2(dx, dy)) + 360) % 360
+}
+
+/** Upward-pointing arrow used as an SDF icon (tinted via iconColor). */
+private fun arrowBitmap(): android.graphics.Bitmap {
+    val n = 64
+    val bmp = android.graphics.Bitmap.createBitmap(n, n, android.graphics.Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(bmp)
+    val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE }
+    val path = android.graphics.Path().apply {
+        moveTo(n / 2f, 6f); lineTo(n - 10f, n - 10f); lineTo(n / 2f, n - 22f); lineTo(10f, n - 10f); close()
+    }
+    c.drawPath(path, p)
+    return bmp
 }
 
 fun trainPosition(l: de.railnav.model.Leg, now: Long): LatLon? {

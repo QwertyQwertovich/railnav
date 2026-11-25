@@ -77,10 +77,21 @@ fun ResultsScreen(vm: AppViewModel) {
             }
             if (vm.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             vm.info?.let { Banner(it) }
+            RecheckNote()
             vm.error?.let { Banner(it, error = true) }
             if (tab == 0) ResultList(vm) else ResultMap(vm)
         }
     }
+}
+
+/** Reminder to double-check routes in the official app before travelling. */
+@Composable
+fun RecheckNote() {
+    Text(
+        "⚠ Маршрут построен по открытым данным — перед поездкой рекомендуется перепроверить его в DB Navigator.",
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable

@@ -133,24 +133,24 @@ fun SearchScreen(vm: AppViewModel) {
                 Column(Modifier.padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            PlaceField(if (vm.travelMode) "Старт (сюда же вернётесь)" else "Откуда", vm.origin) { picker = "origin" }
+                            PlaceField(if (vm.travel) "Старт (сюда же вернётесь)" else "Откуда", vm.origin) { picker = "origin" }
                             vm.vias.forEachIndexed { i, w ->
-                                ViaRow(i, w, label = if (vm.travelMode) "Город ${i + 1}" else "Через (${i + 1})",
+                                ViaRow(i, w, label = if (vm.travel) "Город ${i + 1}" else "Через (${i + 1})",
                                     onPick = { picker = "via:$i" },
                                     onStay = { m -> vm.vias[i] = w.copy(minStayMin = m) },
                                     onMaxStay = { m -> vm.vias[i] = w.copy(maxStayMin = m) },
                                     onRemove = { vm.vias.removeAt(i) })
                             }
-                            PlaceField(
-                                if (vm.roundTrip) "Куда (необязательно)" else "Куда", vm.destination,
-                                placeholder = if (vm.roundTrip) "не указано — путешествие по городам с возвратом в старт" else null,
+                            if (!vm.travel) PlaceField(
+                                if (vm.roundTrip) "Куда (самая дальняя точка)" else "Куда", vm.destination,
+                                placeholder = if (vm.roundTrip && vm.vias.isNotEmpty()) "можно не указывать: развернётесь в последнем городе" else null,
                                 onClear = if (vm.destination != null) ({ vm.destination = null }) else null,
                             ) { picker = "dest" }
                         }
-                        if (!vm.travelMode) IconButton(onClick = { vm.swap() }) { Icon(Icons.Filled.SwapVert, "Поменять местами") }
+                        if (!vm.travel) IconButton(onClick = { vm.swap() }) { Icon(Icons.Filled.SwapVert, "Поменять местами") }
                     }
                     TextButton(onClick = { picker = "addVia" }) {
-                        Icon(Icons.Filled.Add, null); Spacer(Modifier.width(4.dp)); Text(if (vm.travelMode) "Добавить город" else "Промежуточный город или станция")
+                        Icon(Icons.Filled.Add, null); Spacer(Modifier.width(4.dp)); Text(if (vm.travel) "Добавить город" else "Промежуточный город или станция")
                     }
                     if (vm.vias.size >= 2) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -172,7 +172,7 @@ fun SearchScreen(vm: AppViewModel) {
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         SegmentedButton(!vm.arriveBy, { vm.arriveBy = false }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Отправление", maxLines = 1) }
                         SegmentedButton(vm.arriveBy, { vm.arriveBy = true }, SegmentedButtonDefaults.itemShape(1, 2),
-                            enabled = vm.vias.isEmpty() && !vm.roundTrip && !vm.travelMode) { Text("Прибытие", maxLines = 1) }
+                            enabled = vm.vias.isEmpty() && !vm.roundTrip && !vm.travel) { Text("Прибытие", maxLines = 1) }
                     }
                     DateTimeRow(vm.time, { vm.time = it }, nowButton = true)
                     FavoriteTimesRow(vm)
@@ -181,20 +181,24 @@ fun SearchScreen(vm: AppViewModel) {
 
             Card {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Туда и обратно / путешествие")
-                            Text(
-                                if (vm.roundTrip) "без «Куда» — объезд городов из списка и возврат в старт"
-                                else "покажет, сколько времени будет в каждом городе",
-                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        val modes = listOf("Туда", "Туда-обратно", "Путешествие")
+                        val cur = if (vm.travel) 2 else if (vm.roundTrip) 1 else 0
+                        modes.forEachIndexed { i, label ->
+                            SegmentedButton(cur == i, {
+                                vm.roundTrip = i == 1; vm.travel = i == 2
+                                if (i > 0) vm.arriveBy = false
+                            }, SegmentedButtonDefaults.itemShape(i, modes.size)) { Text(label, maxLines = 1, fontSize = 12.sp) }
                         }
-                        Switch(vm.roundTrip, { vm.roundTrip = it; if (it) vm.arriveBy = false })
                     }
-                    if (vm.roundTrip || vm.travelMode) {
-                        if (!vm.travelMode) StayPicker("Минимум в конечной точке", vm.stayAtDestMin) { vm.stayAtDestMin = it }
-                        Text(if (vm.travelMode) "Домой:" else "Обратно:", fontWeight = FontWeight.Medium)
+                    Hint(when {
+                        vm.travel -> "старт и города из списка, в конце — возврат в старт"
+                        vm.roundTrip -> "туда и обратно: покажет, сколько времени будет в каждом городе"
+                        else -> "в одну сторону"
+                    })
+                    if (vm.roundTrip || vm.travel) {
+                        if (!vm.travel) StayPicker("Минимум в конечной точке", vm.stayAtDestMin) { vm.stayAtDestMin = it }
+                        Text(if (vm.travel) "Домой:" else "Обратно:", fontWeight = FontWeight.Medium)
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                             val modes = listOf(ReturnMode.EARLIEST to "Рано", ReturnMode.NOT_BEFORE to "Не раньше", ReturnMode.LATEST to "Поздно")
                             modes.forEachIndexed { i, (m, label) ->
@@ -215,15 +219,7 @@ fun SearchScreen(vm: AppViewModel) {
                             ReturnMode.LATEST -> {
                                 Hint(if (vm.returnTime == null) "последним поездом, который довезёт домой до конца дня"
                                 else "последним поездом с прибытием домой до указанного времени")
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Быть дома до:", Modifier.weight(1f))
-                                    if (vm.returnTime == null) TextButton(onClick = {
-                                        vm.returnTime = Instant.ofEpochMilli(vm.time).atZone(ZoneId.systemDefault()).toLocalDate()
-                                            .atTime(22, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                                    }) { Text("конец дня ▾") }
-                                    else TextButton(onClick = { vm.returnTime = null }) { Text("сбросить") }
-                                }
-                                vm.returnTime?.let { rt -> DateTimeRow(rt, { vm.returnTime = it }, nowButton = false) }
+                                ReturnByRow(vm)
                             }
                         }
                     }
@@ -279,6 +275,25 @@ fun SearchScreen(vm: AppViewModel) {
             picker = null
         }
     }
+}
+
+/** "Быть дома до": quick buttons 20:00 / 22:00 / 0:00 / 1:00 or a custom time. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ReturnByRow(vm: AppViewModel) {
+    val zone = ZoneId.systemDefault()
+    val day = Instant.ofEpochMilli(vm.time).atZone(zone).toLocalDate()
+    fun at(h: Int) = (if (h < 5) day.plusDays(1) else day).atTime(h, 0).atZone(zone).toInstant().toEpochMilli()
+    val presets = listOf(20, 22, 0, 1)
+    var custom by remember { mutableStateOf(vm.returnTime != null && presets.none { at(it) == vm.returnTime }) }
+    Text("Быть дома до:")
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterChip(vm.returnTime == null && !custom, { vm.returnTime = null; custom = false }, label = { Text("конец дня") })
+        for (h in presets) FilterChip(!custom && vm.returnTime == at(h), { vm.returnTime = at(h); custom = false },
+            label = { Text("%d:00".format(h)) })
+        FilterChip(custom, { custom = true; if (vm.returnTime == null) vm.returnTime = at(21) }, label = { Text("своё время") })
+    }
+    if (custom) vm.returnTime?.let { rt -> DateTimeRow(rt, { vm.returnTime = it }, nowButton = false) }
 }
 
 @Composable

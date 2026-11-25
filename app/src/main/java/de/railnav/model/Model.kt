@@ -115,8 +115,15 @@ data class Leg(
     val isWalk get() = product == Product.WALK
     val dep get() = from.dep ?: 0L
     val arr get() = to.arr ?: 0L
-    fun geometry(): List<LatLon> =
-        if (shape.size >= 2) shape else listOf(from.pos) + stops.map { it.pos } + listOf(to.pos)
+    /** Track shape clipped to the first/last stop (feeds sometimes ship the whole block), or straight lines between stops. */
+    fun geometry(): List<LatLon> {
+        if (shape.size < 2) return listOf(from.pos) + stops.map { it.pos } + listOf(to.pos)
+        fun d(a: LatLon, b: LatLon) = (a.lat - b.lat) * (a.lat - b.lat) + (a.lon - b.lon) * (a.lon - b.lon)
+        val i0 = shape.indices.minByOrNull { d(shape[it], from.pos) } ?: 0
+        val i1 = (i0 until shape.size).minByOrNull { d(shape[it], to.pos) } ?: shape.lastIndex
+        if (i1 - i0 < 1) return listOf(from.pos) + stops.map { it.pos } + listOf(to.pos)
+        return listOf(from.pos) + shape.subList(i0, i1 + 1) + listOf(to.pos)
+    }
 }
 
 @Serializable

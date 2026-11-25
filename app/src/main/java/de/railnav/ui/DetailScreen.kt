@@ -98,7 +98,9 @@ fun DetailScreen(vm: AppViewModel, requestNotifications: () -> Unit) {
         if (showMap) RouteMap(planList, 0, {}, Modifier.fillMaxWidth().height(260.dp))
         LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
             item {
+                if (vm.enriching) LinearProgressIndicator(Modifier.fillMaxWidth())
                 vm.info?.let { Banner(it) }
+                RecheckNote()
                 vm.error?.let { Banner(it, error = true) }
                 Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
                     androidx.compose.material3.FilterChip(

@@ -103,4 +103,19 @@ class OnlineProviderTest {
             }
         }
     }
+
+    @Test
+    fun printShareLink() = runBlocking {
+        assumeTrue(System.getProperty("online") == "true")
+        val p = TransitousProvider()
+        val a = p.searchPlaces("Halle (Saale) Hbf").first { !it.isCity }
+        val b = p.searchPlaces("Leipzig Hbf").first { !it.isCity }
+        val t = LocalDate.now().plusDays(1).atTime(9, 0).atZone(z).toInstant().toEpochMilli()
+        val j = TripPlanner(p, 12.0).search(JourneyQuery(a, b, t, products = Product.railOnly)).journeys.first()
+        val plan = de.railnav.model.TripPlan("x", "Halle → Leipzig", listOf(de.railnav.model.Segment(a, b, j, emptyList(), t)))
+        val raw = de.railnav.store.ShareBinary.encode(plan)
+        val def = java.util.zip.Deflater(9, true); def.setInput(raw); def.finish()
+        val buf = ByteArray(raw.size + 64); val n = def.deflate(buf); def.end()
+        println("LINK q=" + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(buf.copyOf(n)))
+    }
 }

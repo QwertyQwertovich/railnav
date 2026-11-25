@@ -78,7 +78,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var returnTime by mutableStateOf<Long?>(null)
     var returnMode by mutableStateOf(ReturnMode.EARLIEST)
     /** Travel mode = round trip without a destination: start → cities → back to start (order may be optimised). */
-    val travelMode get() = roundTrip && destination == null && vias.isNotEmpty()
+    var travel by mutableStateOf(false)
+    val travelMode get() = travel
 
     // full train run (from board or a leg)
     var tripLeg by mutableStateOf<de.railnav.model.Leg?>(null)
@@ -286,14 +287,57 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val p = Share.decodeAny(data)
         if (p == null) { error = "Не удалось прочитать ссылку на маршрут"; return }
         current = p.copy(id = UUID.randomUUID().toString(), notify = false)
+        enrichShared()
         go(Screen.Detail)
     }
 
     fun importText(text: String): Boolean {
         val p = Share.decodeText(text) ?: return false
         current = p.copy(id = UUID.randomUUID().toString(), notify = false)
+        enrichShared()
         go(Screen.Detail)
         return true
+    }
+
+    var enriching by mutableStateOf(false)
+
+    /**
+     * A route opened from a link only has the essentials (no shapes, intermediate stops, trip ids).
+     * Look the same trains up online and swap in the full journeys where they match.
+     */
+    fun enrichShared() {
+        val p = current ?: return
+        if (p.segments.none { it.journey.provider == "shared" }) return
+        enriching = true; info = "Загружаю полную информацию о маршруте…"; error = null
+        viewModelScope.launch {
+            var ok = 0
+            try {
+                val prov = provider()
+                val segs = p.segments.map { s ->
+                    val j = s.journey
+                    val first = j.transitLegs.firstOrNull() ?: return@map s
+                    val last = j.transitLegs.last()
+                    val from = Place(name = first.from.name, lat = first.from.lat, lon = first.from.lon)
+                    val to = Place(name = last.to.name, lat = last.to.lat, lon = last.to.lon)
+                    val q = JourneyQuery(from, to, first.dep - 60_000, false, Product.selectable.toSet(), 0, count = 6)
+                    val res = runCatching { planner(prov).search(q).journeys }.getOrNull().orEmpty()
+                    val lines = j.transitLegs.map { it.line }
+                    fun near(a: Long, b: Long) = kotlin.math.abs(a - b) <= 120_000
+                    val match = res.firstOrNull { r -> near(r.transitLegs.firstOrNull()?.from?.depPlanned ?: r.dep, first.dep) && r.transitLegs.map { it.line } == lines }
+                        ?: res.firstOrNull { r -> near(r.plannedDep, first.dep) && near(r.plannedArr, last.arr) }
+                    if (match != null) { ok++; s.copy(journey = match) } else s
+                }
+                if (current?.id == p.id) current = p.copy(segments = segs)
+                info = when (ok) {
+                    p.segments.size -> "Полная информация загружена (реальное время, остановки, трасса)"
+                    0 -> "Не удалось подгрузить — показаны данные из ссылки"
+                    else -> "Подгружено частично ($ok из ${p.segments.size} участков)"
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                info = "Не удалось подгрузить — показаны данные из ссылки"
+            } finally { enriching = false }
+        }
     }
 
     fun saveCurrent(notify: Boolean = current?.notify ?: false) {

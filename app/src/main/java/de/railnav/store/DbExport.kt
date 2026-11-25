@@ -28,8 +28,16 @@ object DbExport {
         val a = legs.first().from; val b = legs.last().to
         val time = Instant.ofEpochMilli(a.depPlanned ?: legs.first().dep).atZone(ZoneId.of("Europe/Berlin")).format(fmt)
         val p = mutableListOf("sts=true", "so=" + enc(a.name), "zo=" + enc(b.name), "kl=2", "r=13:16:KLASSENLOS:1")
-        eva(a)?.let { p += "soid=" + enc("A=1@L=$it@"); p += "soei=$it"; p += "sot=ST" }
-        eva(b)?.let { p += "zoid=" + enc("A=1@L=$it@"); p += "zoei=$it"; p += "zot=ST" }
+        // Station by EVA number when known; otherwise by coordinates (bahn.de resolves the nearest stop).
+        fun loc(s: StopTime, k: String) {
+            val e = eva(s)
+            if (e != null) { p += "${k}id=" + enc("A=1@L=$e@"); p += "${k}ei=$e"; p += "${k}t=ST" }
+            else {
+                p += "${k}id=" + enc("A=2@O=${s.name}@X=${Math.round(s.lon * 1e6)}@Y=${Math.round(s.lat * 1e6)}@")
+                p += "${k}t=ADR"
+            }
+        }
+        loc(a, "so"); loc(b, "zo")
         p += listOf("hd=$time", "hza=D", "ar=false", "s=true", "d=false", "hz=%5B%5D", "fm=false", "bp=false")
         return "https://www.bahn.de/buchung/fahrplan/suche#" + p.joinToString("&")
     }
